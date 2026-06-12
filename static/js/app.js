@@ -1,0 +1,270 @@
+// Valencia Coordinates (Fallback)
+const VALENCIA_COORDS = [39.4699, -0.3763];
+const DEFAULT_ZOOM = 14;
+
+// Initialize Map
+const map = L.map('map', {
+    zoomControl: false 
+}).setView(VALENCIA_COORDS, DEFAULT_ZOOM);
+
+// Add OpenStreetMap tiles
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '&copy; OpenStreetMap contributors'
+}).addTo(map);
+
+// Add custom zoom control position
+L.control.zoom({
+    position: 'bottomright'
+}).addTo(map);
+
+// Custom Icons
+const createIcon = (color) => {
+    return L.divIcon({
+        className: 'custom-icon',
+        html: `<div style="
+            width: 16px; 
+            height: 16px; 
+            background-color: ${color}; 
+            border: 2px solid white; 
+            border-radius: 50%;
+            box-shadow: 0 0 10px ${color};
+        "></div>`,
+        iconSize: [16, 16],
+        iconAnchor: [8, 8],
+        popupAnchor: [0, -10]
+    });
+};
+
+const busIcon = createIcon('#ef4444');
+const metroIcon = createIcon('#3b82f6');
+const userIcon = createIcon('#10b981'); // Green for user location
+
+let markersLayer = L.layerGroup().addTo(map);
+let activeMarkers = {}; // Keep track of rendered markers by ID
+let userMarker = null;
+let userCurrentLatLng = null;
+
+// Handle Header Toggle
+const headerTop = document.getElementById('header-top');
+const headerBody = document.getElementById('header-body');
+headerTop.addEventListener('click', (e) => {
+    // Don't toggle if clicking the search input
+    if (e.target.id === 'search-input') return;
+    headerBody.classList.toggle('collapsed');
+    headerTop.classList.toggle('collapsed');
+});
+
+// Handle Search
+const searchInput = document.getElementById('search-input');
+const searchResults = document.getElementById('search-results');
+let searchTimeout = null;
+
+searchInput.addEventListener('input', (e) => {
+    const query = e.target.value.trim();
+    if (query.length < 2) {
+        searchResults.classList.add('hidden');
+        return;
+    }
+    
+    clearTimeout(searchTimeout);
+    searchTimeout = setTimeout(async () => {
+        try {
+            const res = await fetch(`/api/search?q=${encodeURIComponent(query)}`);
+            const data = await res.json();
+            if (data.success && data.data.length > 0) {
+                searchResults.innerHTML = data.data.map(stop => `
+                    <div class="search-result-item" data-lat="${stop.location.lat}" data-lng="${stop.location.lng}" data-id="${stop.id}">
+                        <span class="line-badge ${stop.type === 'bus' ? 'bus-line' : 'metro-line'}">${stop.type === 'bus' ? 'EMT' : 'Metro'}</span>
+                        ${stop.name}
+                    </div>
+                `).join('');
+                searchResults.classList.remove('hidden');
+            } else {
+                searchResults.innerHTML = '<div class="search-result-item" style="color:#fca5a5;">No se encontraron resultados</div>';
+                searchResults.classList.remove('hidden');
+            }
+        } catch (err) {
+            console.error(err);
+        }
+    }, 300);
+});
+
+// Handle click on search result
+searchResults.addEventListener('click', (e) => {
+    const item = e.target.closest('.search-result-item');
+    if (item && item.dataset.lat) {
+        const lat = parseFloat(item.dataset.lat);
+        const lng = parseFloat(item.dataset.lng);
+        map.setView([lat, lng], 18);
+        searchResults.classList.add('hidden');
+        searchInput.value = '';
+        headerBody.classList.add('collapsed'); // Collapse header to see map
+        headerTop.classList.add('collapsed');
+    }
+});
+
+// Close search if clicked outside
+document.addEventListener('click', (e) => {
+    if (!e.target.closest('.search-container')) {
+        searchResults.classList.add('hidden');
+    }
+});
+
+// Handle Geolocation with HTML5 native API for continuous tracking
+if ("geolocation" in navigator) {
+    let isFirstLocation = true;
+    
+    navigator.geolocation.watchPosition(
+        function(position) {
+            userCurrentLatLng = [position.coords.latitude, position.coords.longitude];
+            
+            if (isFirstLocation) {
+                // Force center and closer zoom on initial load
+                map.setView(userCurrentLatLng, 18);
+                isFirstLocation = false;
+            }
+            
+            if (!userMarker) {
+                userMarker = L.marker(userCurrentLatLng, { icon: userIcon }).addTo(map)
+                    .bindPopup('<div class="popup-title">Tu ubicación</div>', { className: 'custom-popup' });
+            } else {
+                userMarker.setLatLng(userCurrentLatLng);
+            }
+        },
+        function(error) {
+            console.warn("Geolocation error:", error.message);
+            if (isFirstLocation) fetchStopsInView(); // Fallback
+        },
+        {
+            enableHighAccuracy: true,
+            timeout: 10000,
+            maximumAge: 0
+        }
+    );
+} else {
+    console.warn("Geolocation not supported by this browser.");
+    fetchStopsInView();
+}
+
+// Locate Me Button
+const locateBtn = document.getElementById('locate-btn');
+locateBtn.addEventListener('click', () => {
+    if (userCurrentLatLng) {
+        map.setView(userCurrentLatLng, 18);
+    } else {
+        alert("Buscando tu ubicación... por favor espera o permite el acceso al GPS.");
+    }
+});
+
+// Fetch stops when user stops panning/zooming
+map.on('moveend', fetchStopsInView);
+
+async function fetchStopsInView() {
+    const statusText = document.getElementById('status-text');
+    statusText.innerText = 'Actualizando paradas...';
+    
+    const bounds = map.getBounds();
+    const min_lat = bounds.getSouth();
+    const max_lat = bounds.getNorth();
+    const min_lng = bounds.getWest();
+    const max_lng = bounds.getEast();
+    
+    try {
+        const url = `/api/stops?min_lat=${min_lat}&max_lat=${max_lat}&min_lng=${min_lng}&max_lng=${max_lng}`;
+        const response = await fetch(url);
+        if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+        
+        const data = await response.json();
+        if (data.success) {
+            renderMarkers(data.data);
+            statusText.innerText = `Mostrando ${data.data.length} paradas locales`;
+        } else {
+            throw new Error(data.error);
+        }
+    } catch (error) {
+        console.error("Error fetching stops:", error);
+        statusText.innerText = 'Error al cargar paradas';
+        statusText.style.color = '#ef4444';
+    }
+}
+
+// Render markers on the map
+function renderMarkers(stops) {
+    // We do NOT clear all markers, instead we add new ones. 
+    // For a real production app we'd remove old ones far from view, but this is fine for now.
+    
+    let addedCount = 0;
+    
+    stops.forEach(stop => {
+        // Prevent duplicate markers
+        if (activeMarkers[stop.id]) return;
+        
+        const isBus = stop.type === 'bus';
+        const icon = isBus ? busIcon : metroIcon;
+        const typeLabel = isBus ? 'EMT Autobús' : 'Metrovalencia';
+        
+        const marker = L.marker([stop.location.lat, stop.location.lng], { icon });
+        activeMarkers[stop.id] = marker;
+        markersLayer.addLayer(marker);
+        
+        // Prepare initial popup with loading state
+        marker.bindPopup('', {
+            className: 'custom-popup',
+            closeButton: false,
+            minWidth: 200
+        });
+
+        // Event listener for click to fetch real-time ETA
+        marker.on('click', async (e) => {
+            const popup = e.target.getPopup();
+            
+            // Set loading content
+            popup.setContent(`
+                <div class="popup-title">${stop.name}</div>
+                <div class="popup-type">${typeLabel}</div>
+                <div class="loading-pulse">Cargando tiempos...</div>
+            `);
+            
+            try {
+                const response = await fetch(`/api/eta?id=${stop.id}&type=${stop.type}`);
+                const data = await response.json();
+                
+                if (data.success) {
+                    let linesHtml = '';
+                    if (data.data.length === 0) {
+                        linesHtml = '<div class="no-data">No hay próximas llegadas</div>';
+                    } else {
+                        const lineClass = isBus ? 'bus-line' : 'metro-line';
+                        linesHtml = data.data.map(arrival => `
+                            <div class="arrival-item">
+                                <div class="arrival-left">
+                                    <span class="line-badge ${lineClass}">${arrival.line}</span>
+                                    ${arrival.destination ? `<span class="arrival-dest">${arrival.destination}</span>` : ''}
+                                </div>
+                                <span class="eta-time">${arrival.eta}</span>
+                            </div>
+                        `).join('');
+                    }
+                    
+                    popup.setContent(`
+                        <div class="popup-title">${stop.name}</div>
+                        <div class="popup-type">${typeLabel}${data.cached ? ' <span style="color:#10b981; font-size:0.6rem;">(Cached)</span>' : ''}</div>
+                        <div class="arrivals-container">
+                            ${linesHtml}
+                        </div>
+                    `);
+                } else {
+                    popup.setContent(`
+                        <div class="popup-title">${stop.name}</div>
+                        <div class="error-msg">Error al cargar datos</div>
+                    `);
+                }
+            } catch (error) {
+                popup.setContent(`
+                    <div class="popup-title">${stop.name}</div>
+                    <div class="error-msg">Error de conexión</div>
+                `);
+            }
+        });
+    });
+}
