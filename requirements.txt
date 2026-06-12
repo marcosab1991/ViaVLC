@@ -4,3 +4,4 @@ aiohttp==3.9.5
 aiosqlite==0.20.0
 requests==2.32.3
 pyproj==3.6.1
+emtvlcapi
