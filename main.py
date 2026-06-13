@@ -8,6 +8,9 @@ import aiosqlite
 import emtvlcapi
 import unicodedata
 from fastapi import FastAPI, Query, HTTPException
+
+# Patch EMT API URL to use Geoportal (which doesn't block Cloud IPs like AWS/Hetzner)
+emtvlcapi.EMT_BUS_TIMES_URL = "https://geoportal.emtvalencia.es/EMT/mapfunctions/MapUtilsPetitions.php?sec=getSAE"
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
