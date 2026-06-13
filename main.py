@@ -124,35 +124,18 @@ async def get_line_geometry(line: str):
     try:
         async with aiosqlite.connect('stops.db') as db:
             cursor = await db.execute(
-                'SELECT id, name, lat, lng FROM stops WHERE type="bus" AND lines LIKE ? LIMIT 100',
+                'SELECT id, name, lat, lng FROM stops WHERE lines LIKE ? LIMIT 150',
                 (f'%"{line}"%',)
             )
             rows = await cursor.fetchall()
             
-            if len(rows) < 2:
+            if len(rows) == 0:
                 return {"success": False, "error": "Not enough stops found for line."}
                 
-            stops_dict = {str(r[0]): {"name": r[1], "lat": r[2], "lng": r[3]} for r in rows}
-            
-            coords_str = ';'.join([f"{r[3]},{r[2]}" for r in rows])
-            url = f"http://router.project-osrm.org/trip/v1/driving/{coords_str}?roundtrip=true&source=first&geometries=geojson"
-            
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url, timeout=15) as response:
-                    if response.status != 200:
-                        return {"success": False, "error": "Routing API failed"}
-                    data = await response.json()
-            
-            if 'trips' not in data or not data['trips']:
-                return {"success": False, "error": "No route generated"}
-                
-            geojson = data['trips'][0]['geometry']
-            
-            # Map ordered waypoints back to stop IDs
+            # Bypass OSRM entirely since the frontend no longer draws the street geometry
+            # This prevents OSRM from dropping off-road Metro stations
             ordered_stops = []
-            for wp in data.get('waypoints', []):
-                original_index = wp.get('waypoint_index')
-                row = rows[original_index]
+            for row in rows:
                 ordered_stops.append({
                     "id": str(row[0]),
                     "name": row[1],
@@ -162,7 +145,7 @@ async def get_line_geometry(line: str):
                 
             return {
                 "success": True, 
-                "geometry": geojson,
+                "geometry": None,
                 "ordered_stops": ordered_stops
             }
             
@@ -170,6 +153,7 @@ async def get_line_geometry(line: str):
         return {"success": False, "error": str(e)}
 
 async def fetch_metro_eta(stop_id: str):
+    stop_id = stop_id.replace("metro-", "")
     url = 'https://www.metrovalencia.es/wp-admin/admin-ajax.php'
     inner_data = f'action=info-estacion&id={stop_id}'
     data = {'action': 'formularios_ajax', 'data': inner_data}

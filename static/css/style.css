@@ -463,3 +463,10 @@ h1 {
         background: rgba(0, 0, 0, 0.05);
     }
 }
+
+/* Route Mode Dimming */
+.route-mode-active .leaflet-tile-pane {
+    filter: brightness(0.4) saturate(0.5) contrast(1.2);
+    transition: filter 0.5s ease;
+}
+

@@ -61,6 +61,27 @@ const searchInput = document.getElementById('search-input');
 const searchResults = document.getElementById('search-results');
 let searchTimeout = null;
 
+// Add Exit Route Button to Map
+const exitRouteBtn = L.control({position: 'topright'});
+exitRouteBtn.onAdd = function(map) {
+    const div = L.DomUtil.create('div', 'leaflet-bar leaflet-control');
+    div.innerHTML = `<button id="exit-route-btn" style="display:none; background:#ef4444; color:white; font-weight:bold; padding:8px 12px; border:none; cursor:pointer; border-radius:4px; box-shadow:0 2px 4px rgba(0,0,0,0.2);">❌ Salir de Ruta</button>`;
+    return div;
+};
+exitRouteBtn.addTo(map);
+
+document.getElementById('exit-route-btn').addEventListener('click', () => {
+    if (currentRouteLayer) map.removeLayer(currentRouteLayer);
+    if (routeStopsLayer) map.removeLayer(routeStopsLayer);
+    currentRouteLayer = null;
+    routeStopsLayer = null;
+    map.addLayer(markersLayer); // Restore all markers
+    document.getElementById('map').classList.remove('route-mode-active');
+    document.getElementById('exit-route-btn').style.display = 'none';
+    document.getElementById('status-text').innerText = 'Ruta cerrada.';
+    document.getElementById('status-text').style.color = '#6b7280';
+});
+
 searchInput.addEventListener('input', (e) => {
     const query = e.target.value.trim();
     if (query.length < 2) {
@@ -218,14 +239,22 @@ function renderMarkers(stops) {
 
         // Event listener for click to fetch real-time ETA
         marker.on('click', async (e) => {
-            const popup = e.target.getPopup();
-            
-            // Set loading content
-            popup.setContent(`
-                <div class="popup-title">${stop.name}</div>
-                <div class="popup-type">${typeLabel}</div>
-                <div class="loading-pulse">Cargando tiempos...</div>
-            `);
+            await loadStopData(marker, stop);
+        });
+    });
+}
+
+async function loadStopData(marker, stop, filterLine = null) {
+    const popup = marker.getPopup();
+    const isBus = stop.type === 'bus';
+    const typeLabel = isBus ? 'EMT Autobús' : 'Metrovalencia';
+    
+    // Set loading content
+    popup.setContent(`
+        <div class="popup-title">${stop.name}</div>
+        <div class="popup-type">${typeLabel}</div>
+        <div class="loading-pulse">Cargando tiempos...</div>
+    `);
             
 async function fetchDirectBusEta(stopId) {
     try {
@@ -321,12 +350,19 @@ async function fetchDirectMetroEta(stopId) {
                 
                 if (data.success) {
                     let linesHtml = '';
-                    if (data.data.length === 0) {
-                        linesHtml = '<div class="no-data">No hay próximas llegadas</div>';
+                    
+                    // Filter arrivals if filterLine is provided
+                    let arrivals = data.data;
+                    if (filterLine) {
+                        arrivals = arrivals.filter(a => a.line === filterLine);
+                    }
+                    
+                    if (arrivals.length === 0) {
+                        linesHtml = '<div class="no-data">No hay próximas llegadas de esta línea</div>';
                     } else {
                         const lineClass = isBus ? 'bus-line' : 'metro-line';
-                        linesHtml = data.data.map(arrival => `
-                            <div class="arrival-item" ${isBus ? `onclick="drawRoute('${arrival.line}')" style="cursor: pointer;" title="Ver Ruta"` : ''}>
+                        linesHtml = arrivals.map(arrival => `
+                            <div class="arrival-item" onclick="drawRoute('${arrival.line}', '${stop.type}', '${stop.id}')" style="cursor: pointer;" title="Ver Ruta">
                                 <div class="arrival-left">
                                     <span class="line-badge ${lineClass}">${arrival.line}</span>
                                     ${arrival.destination ? `<span class="arrival-dest">${arrival.destination}</span>` : ''}
@@ -355,18 +391,25 @@ async function fetchDirectMetroEta(stopId) {
                     <div class="error-msg">Error de conexión</div>
                 `);
             }
-        });
-    });
 }
 
 // Initialize application
 document.addEventListener('DOMContentLoaded', initApp);
 
 // Draw route function
-async function drawRoute(line) {
+async function drawRoute(line, type, originStopId = null) {
     // Clear previous
     if (currentRouteLayer) map.removeLayer(currentRouteLayer);
     if (routeStopsLayer) map.removeLayer(routeStopsLayer);
+    
+    // Hide all other markers
+    map.removeLayer(markersLayer);
+    
+    // Show exit button
+    document.getElementById('exit-route-btn').style.display = 'block';
+    
+    // Dim the base map
+    document.getElementById('map').classList.add('route-mode-active');
     
     // Close popup
     map.closePopup();
@@ -380,37 +423,71 @@ async function drawRoute(line) {
         
         if (!data.success) throw new Error(data.error);
         
-        // Draw route line
+        // Draw route line - DISABLED due to bidirectional zig-zag issues without GTFS
+        /*
         currentRouteLayer = L.geoJSON(data.geometry, {
             style: { color: '#ef4444', weight: 4, opacity: 0.8 }
         }).addTo(map);
+        */
         
         // Draw stops
         routeStopsLayer = L.layerGroup().addTo(map);
+        let originMarker = null;
+        
+        const routeColor = type === 'metro' ? '#3b82f6' : '#ef4444'; // Blue for Metro, Red for Bus
+        
         data.ordered_stops.forEach((stop, i) => {
+            const isOrigin = originStopId && (stop.id == originStopId || stop.id == `metro-${originStopId}` || `metro-${stop.id}` == originStopId);
             const marker = L.circleMarker([stop.lat, stop.lng], {
-                radius: 6,
-                fillColor: '#ffffff',
-                color: '#ef4444',
-                weight: 2,
+                radius: isOrigin ? 10 : 6,
+                fillColor: isOrigin ? '#10b981' : '#ffffff',
+                color: isOrigin ? '#059669' : routeColor,
+                weight: isOrigin ? 3 : 2,
                 fillOpacity: 1
             }).bindTooltip(`${i+1}. ${stop.name}`);
             
-            // Allow clicking the stop
-            marker.on('click', () => {
+            // Allow clicking the stop to show its specific ETA
+            marker.bindPopup('', {
+                className: 'custom-popup',
+                closeButton: false,
+                minWidth: 200
+            });
+            
+            marker.on('click', async (e) => {
                 map.setView([stop.lat, stop.lng], 18);
+                // The 'stop' object here is missing the 'type' field because the API doesn't return it
+                // We add it manually based on the drawRoute parameter
+                stop.type = type || 'bus'; 
+                await loadStopData(marker, stop, line);
             });
             
             routeStopsLayer.addLayer(marker);
+            if (isOrigin) originMarker = marker;
         });
         
-        map.fitBounds(currentRouteLayer.getBounds(), { padding: [50, 50] });
-        statusText.innerText = `Ruta dibujada: L${line} (${data.ordered_stops.length} paradas)`;
+        // Use stops layer bounds since route line is disabled
+        const bounds = L.latLngBounds(data.ordered_stops.map(s => [s.lat, s.lng]));
+        map.fitBounds(bounds, { padding: [50, 50] });
+        
+        if (originMarker) {
+            // Open the popup for the selected station after map centers
+            setTimeout(() => {
+                originMarker.openPopup();
+                originMarker.fire('click');
+            }, 500);
+        }
+        
+        statusText.innerText = `Mostrando L${line} (${data.ordered_stops.length} paradas)`;
         statusText.style.color = '#10b981';
         
     } catch (e) {
         console.error("Route error:", e);
         statusText.innerText = `Error cargando ruta L${line}`;
         statusText.style.color = '#ef4444';
+        
+        // If error, restore markers
+        map.addLayer(markersLayer);
+        document.getElementById('map').classList.remove('route-mode-active');
+        document.getElementById('exit-route-btn').style.display = 'none';
     }
 }
