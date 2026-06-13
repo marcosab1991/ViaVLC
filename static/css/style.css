@@ -26,7 +26,8 @@ body {
 .app-container {
     position: relative;
     width: 100vw;
-    height: 100vh;
+    height: 100vh; /* Fallback for older browsers */
+    height: 100dvh; /* Fix for mobile browser toolbars (like Vivaldi/Safari) */
 }
 
 .glass-panel {
@@ -420,8 +421,27 @@ h1 {
         font-size: 0.95rem; /* Larger font to prevent iOS zoom */
     }
     .locate-btn {
-        bottom: calc(120px + env(safe-area-inset-bottom, 0px)); /* Lift significantly higher to clear bottom toolbars */
+        bottom: calc(40px + env(safe-area-inset-bottom, 0px)); /* Lift slightly above Leaflet attribution, safe from toolbars */
         right: 16px;
+    }
+    
+    /* Route Mode adjustments for Mobile */
+    .main-header.route-mode-active {
+        right: 65px; /* Shrink header to make room for exit button */
+        transition: right 0.3s ease;
+    }
+    
+    .exit-route-btn {
+        padding: 8px; /* Square button on mobile */
+        border-radius: 50%; /* Round button */
+        width: 40px;
+        height: 40px;
+        justify-content: center;
+        margin-top: 10px; /* Align with header */
+    }
+    
+    .exit-route-btn .text {
+        display: none; /* Hide text on mobile */
     }
 }
 
@@ -469,4 +489,36 @@ h1 {
     filter: brightness(0.4) saturate(0.5) contrast(1.2);
     transition: filter 0.5s ease;
 }
+
+/* Exit Route Button Styles */
+.exit-route-btn {
+    background: #ef4444;
+    color: white;
+    font-weight: bold;
+    padding: 8px 12px;
+    border: none;
+    cursor: pointer;
+    border-radius: 4px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    transition: all 0.3s ease;
+}
+
+.exit-route-btn:hover {
+    background: #dc2626;
+}
+
+.disclaimer {
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    text-align: center;
+    margin-top: 15px;
+    padding-top: 10px;
+    border-top: 1px solid var(--glass-border);
+    opacity: 0.8;
+}
+
+
 

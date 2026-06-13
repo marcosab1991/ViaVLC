@@ -65,7 +65,12 @@ let searchTimeout = null;
 const exitRouteBtn = L.control({position: 'topright'});
 exitRouteBtn.onAdd = function(map) {
     const div = L.DomUtil.create('div', 'leaflet-bar leaflet-control');
-    div.innerHTML = `<button id="exit-route-btn" style="display:none; background:#ef4444; color:white; font-weight:bold; padding:8px 12px; border:none; cursor:pointer; border-radius:4px; box-shadow:0 2px 4px rgba(0,0,0,0.2);">❌ Salir de Ruta</button>`;
+    div.innerHTML = `
+        <button id="exit-route-btn" class="exit-route-btn" style="display:none;">
+            <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg></span>
+            <span class="text">Salir de Ruta</span>
+        </button>
+    `;
     return div;
 };
 exitRouteBtn.addTo(map);
@@ -77,6 +82,7 @@ document.getElementById('exit-route-btn').addEventListener('click', () => {
     routeStopsLayer = null;
     map.addLayer(markersLayer); // Restore all markers
     document.getElementById('map').classList.remove('route-mode-active');
+    document.querySelector('.main-header').classList.remove('route-mode-active');
     document.getElementById('exit-route-btn').style.display = 'none';
     document.getElementById('status-text').innerText = 'Ruta cerrada.';
     document.getElementById('status-text').style.color = '#6b7280';
@@ -408,8 +414,9 @@ async function drawRoute(line, type, originStopId = null) {
     // Show exit button
     document.getElementById('exit-route-btn').style.display = 'block';
     
-    // Dim the base map
+    // Dim the base map and shrink header on mobile
     document.getElementById('map').classList.add('route-mode-active');
+    document.querySelector('.main-header').classList.add('route-mode-active');
     
     // Close popup
     map.closePopup();
@@ -488,6 +495,7 @@ async function drawRoute(line, type, originStopId = null) {
         // If error, restore markers
         map.addLayer(markersLayer);
         document.getElementById('map').classList.remove('route-mode-active');
+        document.querySelector('.main-header').classList.remove('route-mode-active');
         document.getElementById('exit-route-btn').style.display = 'none';
     }
 }
