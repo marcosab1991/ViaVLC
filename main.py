@@ -88,11 +88,18 @@ async def search_stops(q: str = Query(..., min_length=2)):
     """
     try:
         async with aiosqlite.connect('stops.db') as db:
-            query_normalized = f"%{remove_accents(q)}%"
-            # Search by normalized name or stop ID
+            query_exact = remove_accents(q)
+            query_normalized = f"%{query_exact}%"
+            # Search by normalized name or stop ID, prioritize exact matches and metros
             cursor = await db.execute(
-                'SELECT id, type, name, lat, lng, lines FROM stops WHERE name_normalized LIKE ? OR id LIKE ? LIMIT 10',
-                (query_normalized, query_normalized)
+                '''SELECT id, type, name, lat, lng, lines 
+                   FROM stops 
+                   WHERE name_normalized LIKE ? OR id LIKE ? 
+                   ORDER BY 
+                       CASE WHEN name_normalized = ? THEN 0 ELSE 1 END,
+                       type DESC
+                   LIMIT 15''',
+                (query_normalized, query_normalized, query_exact)
             )
             rows = await cursor.fetchall()
             
