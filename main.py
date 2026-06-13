@@ -90,7 +90,7 @@ async def search_stops(q: str = Query(..., min_length=2)):
         async with aiosqlite.connect('stops.db') as db:
             query_exact = remove_accents(q)
             query_normalized = f"%{query_exact}%"
-            # Search by normalized name or stop ID, prioritize exact matches and metros
+            # Priorizar palavras exatas e colocar os Metros sempre no topo!
             cursor = await db.execute(
                 '''SELECT id, type, name, lat, lng, lines 
                    FROM stops 
@@ -113,6 +113,59 @@ async def search_stops(q: str = Query(..., min_length=2)):
                     "lines": json.loads(row[5])
                 })
             return {"success": True, "data": stops}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+@app.get("/api/line_geometry")
+async def get_line_geometry(line: str):
+    """
+    Get OSRM TSP street route and ordered stops for a specific bus line.
+    """
+    try:
+        async with aiosqlite.connect('stops.db') as db:
+            cursor = await db.execute(
+                'SELECT id, name, lat, lng FROM stops WHERE type="bus" AND lines LIKE ? LIMIT 100',
+                (f'%"{line}"%',)
+            )
+            rows = await cursor.fetchall()
+            
+            if len(rows) < 2:
+                return {"success": False, "error": "Not enough stops found for line."}
+                
+            stops_dict = {str(r[0]): {"name": r[1], "lat": r[2], "lng": r[3]} for r in rows}
+            
+            coords_str = ';'.join([f"{r[3]},{r[2]}" for r in rows])
+            url = f"http://router.project-osrm.org/trip/v1/driving/{coords_str}?roundtrip=true&source=first&geometries=geojson"
+            
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, timeout=15) as response:
+                    if response.status != 200:
+                        return {"success": False, "error": "Routing API failed"}
+                    data = await response.json()
+            
+            if 'trips' not in data or not data['trips']:
+                return {"success": False, "error": "No route generated"}
+                
+            geojson = data['trips'][0]['geometry']
+            
+            # Map ordered waypoints back to stop IDs
+            ordered_stops = []
+            for wp in data.get('waypoints', []):
+                original_index = wp.get('waypoint_index')
+                row = rows[original_index]
+                ordered_stops.append({
+                    "id": str(row[0]),
+                    "name": row[1],
+                    "lat": row[2],
+                    "lng": row[3]
+                })
+                
+            return {
+                "success": True, 
+                "geometry": geojson,
+                "ordered_stops": ordered_stops
+            }
+            
     except Exception as e:
         return {"success": False, "error": str(e)}
 

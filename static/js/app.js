@@ -41,6 +41,8 @@ const userIcon = createIcon('#10b981'); // Green for user location
 
 let markersLayer = L.layerGroup().addTo(map);
 let activeMarkers = {}; // Keep track of rendered markers by ID
+let currentRouteLayer = null; // Store current OSRM route layer
+let routeStopsLayer = null; // Store route stops by ID
 let userMarker = null;
 let userCurrentLatLng = null;
 
@@ -324,7 +326,7 @@ async function fetchDirectMetroEta(stopId) {
                     } else {
                         const lineClass = isBus ? 'bus-line' : 'metro-line';
                         linesHtml = data.data.map(arrival => `
-                            <div class="arrival-item">
+                            <div class="arrival-item" ${isBus ? `onclick="drawRoute('${arrival.line}')" style="cursor: pointer;" title="Ver Ruta"` : ''}>
                                 <div class="arrival-left">
                                     <span class="line-badge ${lineClass}">${arrival.line}</span>
                                     ${arrival.destination ? `<span class="arrival-dest">${arrival.destination}</span>` : ''}
@@ -355,4 +357,60 @@ async function fetchDirectMetroEta(stopId) {
             }
         });
     });
+}
+
+// Initialize application
+document.addEventListener('DOMContentLoaded', initApp);
+
+// Draw route function
+async function drawRoute(line) {
+    // Clear previous
+    if (currentRouteLayer) map.removeLayer(currentRouteLayer);
+    if (routeStopsLayer) map.removeLayer(routeStopsLayer);
+    
+    // Close popup
+    map.closePopup();
+    const statusText = document.getElementById('status-text');
+    statusText.innerText = `Cargando ruta de L${line}...`;
+    statusText.style.color = '#3b82f6';
+    
+    try {
+        const response = await fetch(`/api/line_geometry?line=${line}`);
+        const data = await response.json();
+        
+        if (!data.success) throw new Error(data.error);
+        
+        // Draw route line
+        currentRouteLayer = L.geoJSON(data.geometry, {
+            style: { color: '#ef4444', weight: 4, opacity: 0.8 }
+        }).addTo(map);
+        
+        // Draw stops
+        routeStopsLayer = L.layerGroup().addTo(map);
+        data.ordered_stops.forEach((stop, i) => {
+            const marker = L.circleMarker([stop.lat, stop.lng], {
+                radius: 6,
+                fillColor: '#ffffff',
+                color: '#ef4444',
+                weight: 2,
+                fillOpacity: 1
+            }).bindTooltip(`${i+1}. ${stop.name}`);
+            
+            // Allow clicking the stop
+            marker.on('click', () => {
+                map.setView([stop.lat, stop.lng], 18);
+            });
+            
+            routeStopsLayer.addLayer(marker);
+        });
+        
+        map.fitBounds(currentRouteLayer.getBounds(), { padding: [50, 50] });
+        statusText.innerText = `Ruta dibujada: L${line} (${data.ordered_stops.length} paradas)`;
+        statusText.style.color = '#10b981';
+        
+    } catch (e) {
+        console.error("Route error:", e);
+        statusText.innerText = `Error cargando ruta L${line}`;
+        statusText.style.color = '#ef4444';
+    }
 }
