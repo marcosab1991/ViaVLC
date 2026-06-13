@@ -225,9 +225,97 @@ function renderMarkers(stops) {
                 <div class="loading-pulse">Cargando tiempos...</div>
             `);
             
+async function fetchDirectBusEta(stopId) {
+    try {
+        // Fetch directly from Geoportal to bypass Render blocking AWS IPs!
+        const response = await fetch(`https://geoportal.emtvalencia.es/EMT/mapfunctions/MapUtilsPetitions.php?sec=getSAE&parada=${stopId}`);
+        if (!response.ok) return { success: false };
+        const text = await response.text();
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(text, 'text/xml');
+        const buses = doc.getElementsByTagName('bus');
+        const arrivals = [];
+        for (let i = 0; i < buses.length; i++) {
+            const bus = buses[i];
+            const lineaNode = bus.getElementsByTagName('linea')[0];
+            const destinoNode = bus.getElementsByTagName('destino')[0];
+            const minutosNode = bus.getElementsByTagName('minutos')[0];
+            const horaLlegada = bus.getElementsByTagName('horaLlegada')[0];
+            const errorNode = bus.getElementsByTagName('error')[0];
+            
+            if (errorNode && errorNode.textContent && errorNode.textContent !== 'null') continue;
+            
+            let timeText = '? min';
+            if (minutosNode && minutosNode.textContent) {
+                let m = minutosNode.textContent;
+                if (m.includes('min.')) timeText = m.replace(' min.', '') + ' min';
+                else if (m.startsWith('Pr')) timeText = '1 min';
+                else timeText = m + ' min';
+            } else if (horaLlegada && horaLlegada.textContent) {
+                timeText = horaLlegada.textContent;
+            }
+            
+            if (lineaNode && destinoNode) {
+                arrivals.push({ line: lineaNode.textContent, destination: destinoNode.textContent, eta: timeText });
+            }
+        }
+        return { success: true, data: arrivals, cached: false };
+    } catch(e) {
+        return { success: false };
+    }
+}
+
+async function fetchDirectMetroEta(stopId) {
+    try {
+        const response = await fetch('https://www.metrovalencia.es/wp-admin/admin-ajax.php', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded'
+            },
+            body: `action=formularios_ajax&data=action%3Dinfo-estacion%26id%3D${stopId}`
+        });
+        const data = await response.json();
+        if (!data || !data.html) return { success: true, data: [] };
+        
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(data.html, 'text/html');
+        const items = doc.querySelectorAll('.item--proximos');
+        const arrivals = [];
+        items.forEach(item => {
+            const lineEl = item.querySelector('.linea');
+            const destEl = item.querySelector('.nombre-estacion');
+            const timeEl = item.querySelector('.minutos');
+            if (lineEl && destEl && timeEl) {
+                const lineClasses = Array.from(lineEl.classList);
+                let lineStr = 'L?';
+                for (let c of lineClasses) {
+                    if (c.startsWith('linea-') && c !== 'linea-') {
+                        lineStr = 'L' + c.split('-')[1];
+                    }
+                }
+                arrivals.push({
+                    line: lineStr,
+                    destination: destEl.textContent.trim(),
+                    eta: timeEl.textContent.trim()
+                });
+            }
+        });
+        return { success: true, data: arrivals, cached: false };
+    } catch(e) {
+        console.error("CORS Error Metro:", e);
+        return { success: false, error: "Erro de CORS ou Conexão" };
+    }
+}
+
             try {
-                const response = await fetch(`/api/eta?id=${stop.id}&type=${stop.type}`);
-                const data = await response.json();
+                let data;
+                if (stop.type === 'bus') {
+                    data = await fetchDirectBusEta(stop.id);
+                } else {
+                    // Reverted back to backend to avoid CORS errors
+                    const response = await fetch(`/api/eta?id=${stop.id}&type=${stop.type}`);
+                    data = await response.json();
+                }
                 
                 if (data.success) {
                     let linesHtml = '';
