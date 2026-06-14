@@ -422,13 +422,22 @@ h1 {
     align-items: center;
     gap: 8px;
     cursor: pointer;
-    transition: transform 0.2s ease, opacity 0.3s ease;
+    transition: transform 0.2s ease, opacity 0.3s ease, background 0.2s ease;
     animation: slideUpFadeIn 0.5s ease;
+    
+    /* Glassmorphism missing styles */
+    border: 1px solid var(--glass-border);
+    background: var(--glass-bg);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    box-shadow: var(--glass-shadow);
 }
 
 .pwa-install-btn:hover {
     transform: translateY(-2px);
-    background: rgba(255, 255, 255, 0.9);
+    background: var(--accent-metro);
+    color: white;
+    border-color: transparent;
 }
 
 @keyframes slideUpFadeIn {
