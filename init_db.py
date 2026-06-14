@@ -53,6 +53,11 @@ def fetch_emt_stops(c):
             stop_id = str(attr.get("id_parada"))
             name = attr.get("denominacion", f"Parada {stop_id}")
             lines = [l.strip() for l in str(attr.get("lineas", "")).replace("-", ",").split(",") if l.strip()]
+            
+            # Manual override: Line 62 does not pass through Biblioteca Pública (2290)
+            if stop_id == "2290" and "62" in lines:
+                lines.remove("62")
+                
             lines_json = json.dumps(lines)
             name_normalized = remove_accents(name)
             
