@@ -499,3 +499,53 @@ async function drawRoute(line, type, originStopId = null) {
         document.getElementById('exit-route-btn').style.display = 'none';
     }
 }
+
+// PWA Registration & Install Logic
+let deferredPrompt;
+const pwaInstallBtn = document.getElementById('pwa-install-btn');
+
+const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+const isStandalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone;
+
+if (!isStandalone && isIOS) {
+    // iOS does not fire beforeinstallprompt, show button manually if not installed
+    pwaInstallBtn.style.display = 'flex';
+}
+
+window.addEventListener('beforeinstallprompt', (e) => {
+    // Prevent the mini-infobar from appearing on mobile Chrome
+    e.preventDefault();
+    deferredPrompt = e;
+    pwaInstallBtn.style.display = 'flex';
+});
+
+pwaInstallBtn.addEventListener('click', async () => {
+    if (isIOS) {
+        alert("Para instalar en iPhone/iPad:\n1. Toca el botón de 'Compartir' (cuadrado con flecha hacia arriba)\n2. Toca 'Añadir a la pantalla de inicio'");
+        return;
+    }
+
+    if (deferredPrompt) {
+        deferredPrompt.prompt();
+        const { outcome } = await deferredPrompt.userChoice;
+        if (outcome === 'accepted') {
+            pwaInstallBtn.style.display = 'none';
+        }
+        deferredPrompt = null;
+    }
+});
+
+window.addEventListener('appinstalled', () => {
+    pwaInstallBtn.style.display = 'none';
+    deferredPrompt = null;
+});
+
+// Register Service Worker
+if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+        navigator.serviceWorker.register('/sw.js').catch(err => {
+            console.error('SW registration failed:', err);
+        });
+    });
+}
+
