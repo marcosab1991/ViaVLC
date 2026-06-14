@@ -120,10 +120,17 @@ def fetch_metro_stops(c):
     except Exception as e:
         print(f"Error loading Metrovalencia stops: {e}")
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     conn, c = init_db()
+    
     fetch_emt_stops(c)
     fetch_metro_stops(c)
+    
     conn.commit()
     conn.close()
     print("Database initialization complete.")
+    
+    # Run update_tram_lines to ensure tram stops have their lines associated
+    print("Associating TRAM stops with lines...")
+    import os
+    os.system("python3 update_tram_lines.py")
