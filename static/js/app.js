@@ -37,6 +37,13 @@ const createIcon = (color) => {
 
 const busIcon = createIcon('#ef4444');
 const metroIcon = createIcon('#3b82f6');
+const tramIcon = createIcon('#f97316'); // Orange for TRAM
+
+// Map click closes popup and search
+map.on('click', () => {
+    searchResults.classList.add('hidden');
+});
+
 const userIcon = createIcon('#10b981'); // Green for user location
 
 let markersLayer = L.layerGroup().addTo(map);
@@ -56,10 +63,46 @@ headerTop.addEventListener('click', (e) => {
     headerTop.classList.toggle('collapsed');
 });
 
-// Handle Search
+// Handle Search and Zones
 const searchInput = document.getElementById('search-input');
 const searchResults = document.getElementById('search-results');
+const zoneSelector = document.getElementById('zone-selector');
 let searchTimeout = null;
+
+let showNetwork = {
+    bus: true,
+    metro: true,
+    tram: true
+};
+
+// Transport Filters (using Legend)
+document.querySelectorAll('.legend-item').forEach(btn => {
+    btn.addEventListener('click', () => {
+        const network = btn.getAttribute('data-network');
+        showNetwork[network] = !showNetwork[network];
+        btn.classList.toggle('inactive', !showNetwork[network]);
+        
+        // Clear all current markers from the layer group and re-fetch
+        markersLayer.clearLayers();
+        activeMarkers = {};
+        fetchStopsInView();
+    });
+});
+
+const ZONES = {
+    'valencia': [39.4699, -0.3763],
+    'alicante': [38.3452, -0.4810]
+};
+
+if (zoneSelector) {
+    zoneSelector.addEventListener('change', (e) => {
+        const coords = ZONES[e.target.value];
+        if (coords) {
+            map.flyTo(coords, 14, { duration: 1.5 });
+            setTimeout(fetchStopsInView, 1500);
+        }
+    });
+}
 
 const metroColors = {
     'L1': '#e4be36',
@@ -72,6 +115,15 @@ const metroColors = {
     'L8': '#96c4da',
     'L9': '#a47e52',
     'L10': '#a47e52'
+};
+
+const tramColors = {
+    'L1': '#e12c29',
+    'L2': '#52a144',
+    'L3': '#fdc300',
+    'L4': '#8a348e',
+    'L5': '#0054a4',
+    'L9': '#7f8084'
 };
 
 // Add Exit Route Button to Map
@@ -114,12 +166,20 @@ searchInput.addEventListener('input', (e) => {
             const res = await fetch(`/api/search?q=${encodeURIComponent(query)}`);
             const data = await res.json();
             if (data.success && data.data.length > 0) {
-                searchResults.innerHTML = data.data.map(stop => `
+                searchResults.innerHTML = data.data.map(stop => {
+                    const isBus = stop.type === 'bus';
+                    const isTram = stop.type === 'tram';
+                    const badgeClass = isBus ? 'bus-line' : (isTram ? 'tram-line' : 'metro-line');
+                    const badgeText = isBus ? 'EMT' : (isTram ? 'TRAM' : 'Metro');
+                    const badgeStyle = isTram ? 'background-color: #f97316; color: white; border: none;' : '';
+                    
+                    return `
                     <div class="search-result-item" data-lat="${stop.location.lat}" data-lng="${stop.location.lng}" data-id="${stop.id}">
-                        <span class="line-badge ${stop.type === 'bus' ? 'bus-line' : 'metro-line'}">${stop.type === 'bus' ? 'EMT' : 'Metro'}</span>
+                        <span class="line-badge ${badgeClass}" style="${badgeStyle}">${badgeText}</span>
                         ${stop.name}
                     </div>
-                `).join('');
+                    `;
+                }).join('');
                 searchResults.classList.remove('hidden');
             } else {
                 searchResults.innerHTML = '<div class="search-result-item" style="color:#fca5a5;">No se encontraron resultados</div>';
@@ -238,12 +298,16 @@ function renderMarkers(stops) {
     let addedCount = 0;
     
     stops.forEach(stop => {
+        // Apply network visibility filters
+        if (!showNetwork[stop.type]) return;
+        
         // Prevent duplicate markers
         if (activeMarkers[stop.id]) return;
         
         const isBus = stop.type === 'bus';
-        const icon = isBus ? busIcon : metroIcon;
-        const typeLabel = isBus ? 'EMT Autobús' : 'Metrovalencia';
+        const isTram = stop.type === 'tram';
+        const icon = isBus ? busIcon : (isTram ? tramIcon : metroIcon);
+        const typeLabel = isBus ? "EMT Autobús" : (isTram ? "TRAM d'Alacant" : "Metrovalencia");
         
         const marker = L.marker([stop.location.lat, stop.location.lng], { icon });
         activeMarkers[stop.id] = marker;
@@ -266,7 +330,8 @@ function renderMarkers(stops) {
 async function loadStopData(marker, stop, filterLine = null) {
     const popup = marker.getPopup();
     const isBus = stop.type === 'bus';
-    const typeLabel = isBus ? 'EMT Autobús' : 'Metrovalencia';
+    const isTram = stop.type === 'tram';
+    const typeLabel = isBus ? "EMT Autobús" : (isTram ? "TRAM d'Alacant" : "Metrovalencia");
     
     // Set loading content
     popup.setContent(`
@@ -375,9 +440,10 @@ async function fetchDirectMetroEta(stopId) {
                     if (arrivals.length === 0) {
                         linesHtml = '<div class="no-data">No hay próximas llegadas en esta parada</div>';
                     } else {
-                        const lineClass = isBus ? 'bus-line' : 'metro-line';
+                        const lineClass = isBus ? 'bus-line' : (isTram ? 'tram-line' : 'metro-line');
                         linesHtml = arrivals.map(arrival => {
-                            const badgeStyle = !isBus && metroColors[arrival.line] ? `background-color: ${metroColors[arrival.line]}; color: white; border: none;` : '';
+                            const colorsMap = isTram ? tramColors : metroColors;
+                            const badgeStyle = !isBus && colorsMap[arrival.line] ? `background-color: ${colorsMap[arrival.line]}; color: white; border: none;` : '';
                             return `
                             <div class="arrival-item" onclick="drawRoute('${arrival.line}', '${stop.type}', '${stop.id}', '${(arrival.destination || '').replace(/'/g, "\\'")}')" style="cursor: pointer;" title="Ver Ruta">
                                 <div class="arrival-left">
@@ -439,9 +505,13 @@ async function drawRoute(line, type, originStopId = null, destination = null) {
         const response = await fetch(url);
         const data = await response.json();
         
-        if (!data.success) throw new Error(data.error);
+        if (!data.success) throw new Error(data.error || 'Failed to fetch route');
         
-        const routeColor = type === 'metro' ? (metroColors[line] || '#3b82f6') : '#ef4444'; // Specific Metro color, or Red for Bus
+        const isTram = type === 'tram';
+        const colorsMap = isTram ? tramColors : metroColors;
+        const defaultColor = isTram ? '#f97316' : '#3b82f6';
+        
+        const routeColor = (type === 'metro' || isTram) ? (colorsMap[line] || defaultColor) : '#ef4444'; // Specific color, or Red for Bus
         
         // Draw route line
         if (data.geometry) {
@@ -493,8 +563,12 @@ async function drawRoute(line, type, originStopId = null, destination = null) {
         });
         
         // Use stops layer bounds since route line is disabled
-        const bounds = L.latLngBounds(data.ordered_stops.map(s => [s.lat, s.lng]));
-        map.fitBounds(bounds, { padding: [50, 50] });
+        if (data.ordered_stops.length > 0) {
+            const bounds = L.latLngBounds(data.ordered_stops.map(s => [s.lat, s.lng]));
+            map.fitBounds(bounds, { padding: [50, 50] });
+        } else if (currentRouteLayer && typeof currentRouteLayer.getBounds === 'function') {
+            map.fitBounds(currentRouteLayer.getBounds(), { padding: [50, 50] });
+        }
         
         if (originMarker) {
             // Open the popup for the selected station after map centers

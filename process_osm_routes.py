@@ -22,10 +22,12 @@ def process_routes(file_name, transport_type):
             geometry = []
             for member in elem.get("members", []):
                 if member["type"] == "way" and "geometry" in member:
+                    way_coords = []
                     for pt in member["geometry"]:
-                        # Leaflet prefers [lat, lng] for Polyline, but GeoJSON uses [lng, lat].
-                        # In app.js we use L.geoJSON, so we should build a valid GeoJSON Feature!
-                        geometry.append([pt["lon"], pt["lat"]])
+                        # GeoJSON uses [lng, lat].
+                        way_coords.append([pt["lon"], pt["lat"]])
+                    if way_coords:
+                        geometry.append(way_coords)
             
             if geometry:
                 routes.append({
@@ -46,6 +48,10 @@ print("Processing Metro routes...")
 metro_routes = process_routes("metro_routes.json", "metro")
 print(f"Loaded {len(metro_routes)} Metro routes.")
 
+print("Processing TRAM routes...")
+tram_routes = process_routes("tram_routes.json", "tram")
+print(f"Loaded {len(tram_routes)} TRAM routes.")
+
 print("Saving to lines.db...")
 conn = sqlite3.connect("lines.db")
 c = conn.cursor()
@@ -61,10 +67,10 @@ c.execute('''
 ''')
 c.execute("DELETE FROM routes")
 
-for r in emt_routes + metro_routes:
-    # Build GeoJSON LineString
+for r in emt_routes + metro_routes + tram_routes:
+    # Build GeoJSON MultiLineString
     geojson = {
-        "type": "LineString",
+        "type": "MultiLineString",
         "coordinates": r["geometry"]
     }
     c.execute(

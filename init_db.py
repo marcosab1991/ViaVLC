@@ -87,6 +87,19 @@ def fetch_metro_stops(c):
                           (f"metro-{stop['id']}", 'metro', stop["name"], name_normalized, lat, lng, lines_json))
                 count += 1
             print(f"Inserted {count} Metrovalencia stops into DB.")
+        
+        # Load TRAM d'Alacant stops
+        print("Loading TRAM d'Alacant stops...")
+        with open('tram_stations.json', 'r', encoding='utf-8') as f:
+            tram_stops = json.load(f)
+            for stop in tram_stops:
+                lines_json = json.dumps(stop.get('lines', []))
+                name_normalized = remove_accents(stop['name'].lower())
+                c.execute(
+                    'INSERT OR REPLACE INTO stops (id, type, name, name_normalized, lat, lng, lines) VALUES (?, ?, ?, ?, ?, ?, ?)',
+                    (f"tram-{stop['id']}", 'tram', stop['name'], name_normalized, stop['location']['lat'], stop['location']['lng'], lines_json)
+                )
+        print(f"Inserted {len(tram_stops)} TRAM d'Alacant stops into DB.")
     except Exception as e:
         print(f"Error loading Metrovalencia stops: {e}")
 

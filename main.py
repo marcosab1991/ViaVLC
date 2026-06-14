@@ -146,12 +146,12 @@ async def get_line_geometry(line: str, type: str = "bus", destination: str = "")
     try:
         # Step 1: Find best matching geometry from lines.db
         geometry = None
-        if destination:
-            async with aiosqlite.connect('lines.db') as db:
-                cursor = await db.execute('SELECT destination, geometry_json FROM routes WHERE ref=? AND type=?', (line, type))
-                rows = await cursor.fetchall()
-                
-                if rows:
+        async with aiosqlite.connect('lines.db') as db:
+            cursor = await db.execute('SELECT destination, geometry_json FROM routes WHERE ref=? AND type=?', (line, type))
+            rows = await cursor.fetchall()
+            
+            if rows:
+                if destination:
                     best_geom = None
                     highest_ratio = -1
                     target_dest = remove_accents(destination.lower())
@@ -165,12 +165,30 @@ async def get_line_geometry(line: str, type: str = "bus", destination: str = "")
                     
                     if best_geom:
                         geometry = json.loads(best_geom)
+                else:
+                    # Merge all geometries for this line to show all branches
+                    merged_coords = []
+                    for row_dest, geom_json in rows:
+                        try:
+                            geom = json.loads(geom_json)
+                            if geom.get("type") == "MultiLineString":
+                                merged_coords.extend(geom.get("coordinates", []))
+                            elif geom.get("type") == "LineString":
+                                merged_coords.append(geom.get("coordinates", []))
+                        except Exception:
+                            pass
+                    
+                    if merged_coords:
+                        geometry = {
+                            "type": "MultiLineString",
+                            "coordinates": merged_coords
+                        }
         
         # Step 2: Fallback ordered stops (if needed by frontend to draw points)
         async with aiosqlite.connect('stops.db') as db:
             cursor = await db.execute(
-                'SELECT id, name, lat, lng FROM stops WHERE lines LIKE ? LIMIT 150',
-                (f'%"{line}"%',)
+                'SELECT id, name, lat, lng FROM stops WHERE type=? AND lines LIKE ? LIMIT 150',
+                (type, f'%"{line}"%')
             )
             rows = await cursor.fetchall()
             raw_stops = []
@@ -226,6 +244,35 @@ async def fetch_metro_eta(stop_id: str):
                     })
             return arrivals
 
+async def fetch_tram_eta(stop_id: str):
+    stop_id = stop_id.replace("tram-", "")
+    url = 'https://www.tramalacant.es/wp-admin/admin-ajax.php'
+    inner_data = f'action=info-estacion&id={stop_id}'
+    data = {'action': 'formularios_ajax', 'data': inner_data}
+    
+    async with aiohttp.ClientSession() as session:
+        async with session.post(url, data=data, headers={'User-Agent': 'Mozilla/5.0'}, timeout=10) as response:
+            text = await response.text()
+            try:
+                res = json.loads(text)
+            except Exception:
+                res = {}
+            html = res.get('html', '')
+            
+            arrivals = []
+            blocks = html.split('item--proximos')[1:]
+            for block in blocks:
+                line_match = re.search(r'class=\"linea linea-(\w+)\"', block)
+                dest_match = re.search(r'<div class=\"nombre-estacion\">(.*?)</div>', block)
+                eta_match = re.search(r'<span class=\"minutos[^\"]*\">(.*?)</span>', block)
+                if line_match and dest_match and eta_match:
+                    arrivals.append({
+                        "line": f"L{line_match.group(1)}",
+                        "destination": dest_match.group(1).strip(),
+                        "eta": eta_match.group(1).strip()
+                    })
+            return arrivals
+
 def fetch_bus_eta_sync(stop_id: str):
     arrivals = []
     live_data = emtvlcapi.get_bus_times(int(stop_id))
@@ -255,7 +302,11 @@ async def get_eta(id: str, type: str):
             arrivals = await asyncio.to_thread(fetch_bus_eta_sync, id)
         elif type == "metro":
             arrivals = await fetch_metro_eta(id)
-            
+        elif type == "tram":
+            arrivals = await fetch_tram_eta(id)
+        else:
+            return {"success": False, "error": "Unknown transport type"}
+        
         # Update cache
         eta_cache.set(cache_key, arrivals)
         return {"success": True, "data": arrivals, "cached": False}

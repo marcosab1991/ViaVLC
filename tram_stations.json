@@ -1,0 +1,1102 @@
+[
+  {
+    "id": "9",
+    "type": "tram",
+    "name": "Condomina",
+    "location": {
+      "lat": 38.3747727,
+      "lng": -0.4287439
+    },
+    "lines": []
+  },
+  {
+    "id": "51",
+    "type": "tram",
+    "name": "Campo de Golf",
+    "location": {
+      "lat": 38.3775142,
+      "lng": -0.4218648
+    },
+    "lines": []
+  },
+  {
+    "id": "10",
+    "type": "tram",
+    "name": "Costa Blanca",
+    "location": {
+      "lat": 38.3790869,
+      "lng": -0.4111843
+    },
+    "lines": []
+  },
+  {
+    "id": "104",
+    "type": "tram",
+    "name": "Sergio Cardell",
+    "location": {
+      "lat": 38.3647226,
+      "lng": -0.4323165
+    },
+    "lines": []
+  },
+  {
+    "id": "39",
+    "type": "tram",
+    "name": "Garganes",
+    "location": {
+      "lat": 38.6022259,
+      "lng": -0.047921
+    },
+    "lines": []
+  },
+  {
+    "id": "11",
+    "type": "tram",
+    "name": "Carrabiners",
+    "location": {
+      "lat": 38.3885928,
+      "lng": -0.4083558
+    },
+    "lines": []
+  },
+  {
+    "id": "12",
+    "type": "tram",
+    "name": "Muchavista",
+    "location": {
+      "lat": 38.396929,
+      "lng": -0.4066878
+    },
+    "lines": []
+  },
+  {
+    "id": "13",
+    "type": "tram",
+    "name": "Les Llances",
+    "location": {
+      "lat": 38.4051278,
+      "lng": -0.40416
+    },
+    "lines": []
+  },
+  {
+    "id": "17",
+    "type": "tram",
+    "name": "El Campello",
+    "location": {
+      "lat": 38.4278009,
+      "lng": -0.3951217
+    },
+    "lines": []
+  },
+  {
+    "id": "17",
+    "type": "tram",
+    "name": "El Campello",
+    "location": {
+      "lat": 38.4278273,
+      "lng": -0.3951509
+    },
+    "lines": []
+  },
+  {
+    "id": "19",
+    "type": "tram",
+    "name": "Poble Espanyol",
+    "location": {
+      "lat": 38.4391163,
+      "lng": -0.3825775
+    },
+    "lines": []
+  },
+  {
+    "id": "28",
+    "type": "tram",
+    "name": "Creueta",
+    "location": {
+      "lat": 38.5100919,
+      "lng": -0.2315775
+    },
+    "lines": []
+  },
+  {
+    "id": "27",
+    "type": "tram",
+    "name": "La Vila Joiosa",
+    "location": {
+      "lat": 38.5060092,
+      "lng": -0.2364023
+    },
+    "lines": []
+  },
+  {
+    "id": "25",
+    "type": "tram",
+    "name": "Venta Lanuza",
+    "location": {
+      "lat": 38.4769079,
+      "lng": -0.3184094
+    },
+    "lines": []
+  },
+  {
+    "id": "22",
+    "type": "tram",
+    "name": "Cala Piteres",
+    "location": {
+      "lat": 38.4540301,
+      "lng": -0.3527657
+    },
+    "lines": []
+  },
+  {
+    "id": "21",
+    "type": "tram",
+    "name": "Coveta Fum\u00e0",
+    "location": {
+      "lat": 38.4501399,
+      "lng": -0.3645117
+    },
+    "lines": []
+  },
+  {
+    "id": "20",
+    "type": "tram",
+    "name": "Amerador",
+    "location": {
+      "lat": 38.4448228,
+      "lng": -0.3733761
+    },
+    "lines": []
+  },
+  {
+    "id": "26",
+    "type": "tram",
+    "name": "Parad\u00eds",
+    "location": {
+      "lat": 38.5002722,
+      "lng": -0.2573943
+    },
+    "lines": []
+  },
+  {
+    "id": "16",
+    "type": "tram",
+    "name": "Pla Barraques",
+    "location": {
+      "lat": 38.4215137,
+      "lng": -0.3968598
+    },
+    "lines": []
+  },
+  {
+    "id": "15",
+    "type": "tram",
+    "name": "Salesians",
+    "location": {
+      "lat": 38.4160248,
+      "lng": -0.3977628
+    },
+    "lines": []
+  },
+  {
+    "id": "14",
+    "type": "tram",
+    "name": "Fabraquer",
+    "location": {
+      "lat": 38.4124494,
+      "lng": -0.4018574
+    },
+    "lines": []
+  },
+  {
+    "id": "29",
+    "type": "tram",
+    "name": "Costera Pastor",
+    "location": {
+      "lat": 38.5136158,
+      "lng": -0.219233
+    },
+    "lines": []
+  },
+  {
+    "id": "32",
+    "type": "tram",
+    "name": "Terra Mitica",
+    "location": {
+      "lat": 38.5467075,
+      "lng": -0.1589361
+    },
+    "lines": []
+  },
+  {
+    "id": "42",
+    "type": "tram",
+    "name": "Calp",
+    "location": {
+      "lat": 38.6499381,
+      "lng": 0.0329356
+    },
+    "lines": []
+  },
+  {
+    "id": "44",
+    "type": "tram",
+    "name": "Benissa",
+    "location": {
+      "lat": 38.7149948,
+      "lng": 0.0764918
+    },
+    "lines": []
+  },
+  {
+    "id": "45",
+    "type": "tram",
+    "name": "Teulada",
+    "location": {
+      "lat": 38.7292208,
+      "lng": 0.0979814
+    },
+    "lines": []
+  },
+  {
+    "id": "47",
+    "type": "tram",
+    "name": "La Xara",
+    "location": {
+      "lat": 38.8229701,
+      "lng": 0.0638344
+    },
+    "lines": []
+  },
+  {
+    "id": "112",
+    "type": "tram",
+    "name": "Paises Escandinavos",
+    "location": {
+      "lat": 38.3724779,
+      "lng": -0.4200235
+    },
+    "lines": []
+  },
+  {
+    "id": "111",
+    "type": "tram",
+    "name": "Instituto",
+    "location": {
+      "lat": 38.3767821,
+      "lng": -0.4192169
+    },
+    "lines": []
+  },
+  {
+    "id": "110",
+    "type": "tram",
+    "name": "Plaza La Coru\u00f1a",
+    "location": {
+      "lat": 38.3753958,
+      "lng": -0.4131966
+    },
+    "lines": []
+  },
+  {
+    "id": "117",
+    "type": "tram",
+    "name": "Hospital",
+    "location": {
+      "lat": 38.3643274,
+      "lng": -0.4838579
+    },
+    "lines": []
+  },
+  {
+    "id": "38",
+    "type": "tram",
+    "name": "Altea",
+    "location": {
+      "lat": 38.5960449,
+      "lng": -0.0520596
+    },
+    "lines": []
+  },
+  {
+    "id": "107",
+    "type": "tram",
+    "name": "Cabo Huertas / Cap de l'Horta",
+    "location": {
+      "lat": 38.3625658,
+      "lng": -0.4147644
+    },
+    "lines": []
+  },
+  {
+    "id": "108",
+    "type": "tram",
+    "name": "Av. Benidorm / Platja de San Joan",
+    "location": {
+      "lat": 38.3653401,
+      "lng": -0.4118783
+    },
+    "lines": []
+  },
+  {
+    "id": "109",
+    "type": "tram",
+    "name": "Londres",
+    "location": {
+      "lat": 38.3701524,
+      "lng": -0.412009
+    },
+    "lines": []
+  },
+  {
+    "id": "113",
+    "type": "tram",
+    "name": "Holanda",
+    "location": {
+      "lat": 38.3681319,
+      "lng": -0.4198137
+    },
+    "lines": []
+  },
+  {
+    "id": "31",
+    "type": "tram",
+    "name": "Cala Finestrat",
+    "location": {
+      "lat": 38.5406506,
+      "lng": -0.175002
+    },
+    "lines": []
+  },
+  {
+    "id": "30",
+    "type": "tram",
+    "name": "Hospital Vila",
+    "location": {
+      "lat": 38.5308518,
+      "lng": -0.1988224
+    },
+    "lines": []
+  },
+  {
+    "id": "35",
+    "type": "tram",
+    "name": "Cam\u00ed Coves",
+    "location": {
+      "lat": 38.5594193,
+      "lng": -0.1041655
+    },
+    "lines": []
+  },
+  {
+    "id": "36",
+    "type": "tram",
+    "name": "L'Alf\u00e0s del P\u00ed",
+    "location": {
+      "lat": 38.5675643,
+      "lng": -0.0929055
+    },
+    "lines": []
+  },
+  {
+    "id": "40",
+    "type": "tram",
+    "name": "Cap Negret",
+    "location": {
+      "lat": 38.610568,
+      "lng": -0.0409684
+    },
+    "lines": []
+  },
+  {
+    "id": "41",
+    "type": "tram",
+    "name": "Olla de Altea / l'Olla - Altea",
+    "location": {
+      "lat": 38.621503,
+      "lng": -0.0327455
+    },
+    "lines": []
+  },
+  {
+    "id": "5",
+    "type": "tram",
+    "name": "Sangueta",
+    "location": {
+      "lat": 38.351832,
+      "lng": -0.4678768
+    },
+    "lines": []
+  },
+  {
+    "id": "116",
+    "type": "tram",
+    "name": "Garbinet",
+    "location": {
+      "lat": 38.3624404,
+      "lng": -0.4782525
+    },
+    "lines": []
+  },
+  {
+    "id": "37",
+    "type": "tram",
+    "name": "El Albir",
+    "location": {
+      "lat": 38.5764442,
+      "lng": -0.0795755
+    },
+    "lines": []
+  },
+  {
+    "id": "106",
+    "type": "tram",
+    "name": "Av. Naciones",
+    "location": {
+      "lat": 38.3623141,
+      "lng": -0.4203368
+    },
+    "lines": []
+  },
+  {
+    "id": "105",
+    "type": "tram",
+    "name": "Tridente",
+    "location": {
+      "lat": 38.3621733,
+      "lng": -0.4251587
+    },
+    "lines": []
+  },
+  {
+    "id": "124",
+    "type": "tram",
+    "name": "Sant Vicent del Raspeig",
+    "location": {
+      "lat": 38.3920967,
+      "lng": -0.5169384
+    },
+    "lines": []
+  },
+  {
+    "id": "116",
+    "type": "tram",
+    "name": "Garbinet",
+    "location": {
+      "lat": 38.3624308,
+      "lng": -0.4783146
+    },
+    "lines": []
+  },
+  {
+    "id": "117",
+    "type": "tram",
+    "name": "Hospital",
+    "location": {
+      "lat": 38.3642932,
+      "lng": -0.483873
+    },
+    "lines": []
+  },
+  {
+    "id": "124",
+    "type": "tram",
+    "name": "Sant Vicent del Raspeig",
+    "location": {
+      "lat": 38.392078,
+      "lng": -0.5169764
+    },
+    "lines": []
+  },
+  {
+    "id": "104",
+    "type": "tram",
+    "name": "Sergio Cardell",
+    "location": {
+      "lat": 38.3647384,
+      "lng": -0.4322798
+    },
+    "lines": []
+  },
+  {
+    "id": "105",
+    "type": "tram",
+    "name": "Tridente",
+    "location": {
+      "lat": 38.3622033,
+      "lng": -0.4251601
+    },
+    "lines": []
+  },
+  {
+    "id": "106",
+    "type": "tram",
+    "name": "Av. Naciones",
+    "location": {
+      "lat": 38.3623467,
+      "lng": -0.4203392
+    },
+    "lines": []
+  },
+  {
+    "id": "115",
+    "type": "tram",
+    "name": "Bulevar del Pla",
+    "location": {
+      "lat": 38.359949,
+      "lng": -0.4720944
+    },
+    "lines": []
+  },
+  {
+    "id": "115",
+    "type": "tram",
+    "name": "Bulevar del Pla",
+    "location": {
+      "lat": 38.3599791,
+      "lng": -0.4720794
+    },
+    "lines": []
+  },
+  {
+    "id": "121",
+    "type": "tram",
+    "name": "Ciudad Jard\u00edn",
+    "location": {
+      "lat": 38.3757675,
+      "lng": -0.4978543
+    },
+    "lines": []
+  },
+  {
+    "id": "121",
+    "type": "tram",
+    "name": "Ciudad Jard\u00edn",
+    "location": {
+      "lat": 38.3758103,
+      "lng": -0.4977521
+    },
+    "lines": []
+  },
+  {
+    "id": "119",
+    "type": "tram",
+    "name": "Pintor Gast\u00f3n Castell\u00f3",
+    "location": {
+      "lat": 38.3739213,
+      "lng": -0.4871507
+    },
+    "lines": []
+  },
+  {
+    "id": "119",
+    "type": "tram",
+    "name": "Pintor Gast\u00f3n Castell\u00f3",
+    "location": {
+      "lat": 38.3739248,
+      "lng": -0.4871071
+    },
+    "lines": []
+  },
+  {
+    "id": "114",
+    "type": "tram",
+    "name": "La Goteta - Plaza Mar 2",
+    "location": {
+      "lat": 38.3546326,
+      "lng": -0.4692193
+    },
+    "lines": []
+  },
+  {
+    "id": "114",
+    "type": "tram",
+    "name": "La Goteta - Plaza Mar 2",
+    "location": {
+      "lat": 38.3546489,
+      "lng": -0.4692571
+    },
+    "lines": []
+  },
+  {
+    "id": "118",
+    "type": "tram",
+    "name": "Maestro Alonso",
+    "location": {
+      "lat": 38.3682607,
+      "lng": -0.4858927
+    },
+    "lines": []
+  },
+  {
+    "id": "118",
+    "type": "tram",
+    "name": "Maestro Alonso",
+    "location": {
+      "lat": 38.3682743,
+      "lng": -0.4858563
+    },
+    "lines": []
+  },
+  {
+    "id": "122",
+    "type": "tram",
+    "name": "Santa Isabel",
+    "location": {
+      "lat": 38.3817716,
+      "lng": -0.5044525
+    },
+    "lines": []
+  },
+  {
+    "id": "122",
+    "type": "tram",
+    "name": "Santa Isabel",
+    "location": {
+      "lat": 38.3817842,
+      "lng": -0.504417
+    },
+    "lines": []
+  },
+  {
+    "id": "123",
+    "type": "tram",
+    "name": "Universitat",
+    "location": {
+      "lat": 38.3870711,
+      "lng": -0.5109468
+    },
+    "lines": []
+  },
+  {
+    "id": "123",
+    "type": "tram",
+    "name": "Universitat",
+    "location": {
+      "lat": 38.3870917,
+      "lng": -0.5109165
+    },
+    "lines": []
+  },
+  {
+    "id": "120",
+    "type": "tram",
+    "name": "Virgen del Remedio",
+    "location": {
+      "lat": 38.3765768,
+      "lng": -0.4905584
+    },
+    "lines": []
+  },
+  {
+    "id": "7",
+    "type": "tram",
+    "name": "Albufereta",
+    "location": {
+      "lat": 38.3667558,
+      "lng": -0.4425576
+    },
+    "lines": []
+  },
+  {
+    "id": "7",
+    "type": "tram",
+    "name": "Albufereta",
+    "location": {
+      "lat": 38.3667743,
+      "lng": -0.4425938
+    },
+    "lines": []
+  },
+  {
+    "id": "51",
+    "type": "tram",
+    "name": "Campo de Golf",
+    "location": {
+      "lat": 38.3775338,
+      "lng": -0.4218948
+    },
+    "lines": []
+  },
+  {
+    "id": "9",
+    "type": "tram",
+    "name": "Condomina",
+    "location": {
+      "lat": 38.3748014,
+      "lng": -0.4287585
+    },
+    "lines": []
+  },
+  {
+    "id": "6",
+    "type": "tram",
+    "name": "La Isleta",
+    "location": {
+      "lat": 38.3628861,
+      "lng": -0.4470381
+    },
+    "lines": []
+  },
+  {
+    "id": "6",
+    "type": "tram",
+    "name": "La Isleta",
+    "location": {
+      "lat": 38.3629058,
+      "lng": -0.4470711
+    },
+    "lines": []
+  },
+  {
+    "id": "8",
+    "type": "tram",
+    "name": "Lucentum",
+    "location": {
+      "lat": 38.3700616,
+      "lng": -0.4383034
+    },
+    "lines": []
+  },
+  {
+    "id": "8",
+    "type": "tram",
+    "name": "Lucentum",
+    "location": {
+      "lat": 38.3702891,
+      "lng": -0.4384857
+    },
+    "lines": []
+  },
+  {
+    "id": "8",
+    "type": "tram",
+    "name": "Lucentum",
+    "location": {
+      "lat": 38.3703019,
+      "lng": -0.4385185
+    },
+    "lines": []
+  },
+  {
+    "id": "103",
+    "type": "tram",
+    "name": "Miriam Blasco",
+    "location": {
+      "lat": 38.368754,
+      "lng": -0.4356852
+    },
+    "lines": []
+  },
+  {
+    "id": "103",
+    "type": "tram",
+    "name": "Miriam Blasco",
+    "location": {
+      "lat": 38.3689173,
+      "lng": -0.4353194
+    },
+    "lines": []
+  },
+  {
+    "id": "5",
+    "type": "tram",
+    "name": "Sangueta",
+    "location": {
+      "lat": 38.3518767,
+      "lng": -0.46793
+    },
+    "lines": []
+  },
+  {
+    "id": "5",
+    "type": "tram",
+    "name": "Sangueta",
+    "location": {
+      "lat": 38.3519097,
+      "lng": -0.4679562
+    },
+    "lines": []
+  },
+  {
+    "id": "11",
+    "type": "tram",
+    "name": "Carrabiners",
+    "location": {
+      "lat": 38.3885979,
+      "lng": -0.4083942
+    },
+    "lines": []
+  },
+  {
+    "id": "10",
+    "type": "tram",
+    "name": "Costa Blanca",
+    "location": {
+      "lat": 38.3791207,
+      "lng": -0.4112094
+    },
+    "lines": []
+  },
+  {
+    "id": "14",
+    "type": "tram",
+    "name": "Fabraquer",
+    "location": {
+      "lat": 38.4123779,
+      "lng": -0.4019314
+    },
+    "lines": []
+  },
+  {
+    "id": "13",
+    "type": "tram",
+    "name": "Les Llances",
+    "location": {
+      "lat": 38.4051278,
+      "lng": -0.4041986
+    },
+    "lines": []
+  },
+  {
+    "id": "12",
+    "type": "tram",
+    "name": "Muchavista",
+    "location": {
+      "lat": 38.3969357,
+      "lng": -0.4067275
+    },
+    "lines": []
+  },
+  {
+    "id": "16",
+    "type": "tram",
+    "name": "Pla Barraques",
+    "location": {
+      "lat": 38.4215194,
+      "lng": -0.3969012
+    },
+    "lines": []
+  },
+  {
+    "id": "17",
+    "type": "tram",
+    "name": "El Campello",
+    "location": {
+      "lat": 38.4278697,
+      "lng": -0.3952174
+    },
+    "lines": []
+  },
+  {
+    "id": "15",
+    "type": "tram",
+    "name": "Salesians",
+    "location": {
+      "lat": 38.416029,
+      "lng": -0.3978032
+    },
+    "lines": []
+  },
+  {
+    "id": "19",
+    "type": "tram",
+    "name": "Poble Espanyol",
+    "location": {
+      "lat": 38.4391408,
+      "lng": -0.3826072
+    },
+    "lines": []
+  },
+  {
+    "id": "29",
+    "type": "tram",
+    "name": "Costera Pastor",
+    "location": {
+      "lat": 38.513583,
+      "lng": -0.219231
+    },
+    "lines": []
+  },
+  {
+    "id": "28",
+    "type": "tram",
+    "name": "Creueta",
+    "location": {
+      "lat": 38.5100754,
+      "lng": -0.2316904
+    },
+    "lines": []
+  },
+  {
+    "id": "25",
+    "type": "tram",
+    "name": "Venta Lanuza",
+    "location": {
+      "lat": 38.4769281,
+      "lng": -0.3184378
+    },
+    "lines": []
+  },
+  {
+    "id": "22",
+    "type": "tram",
+    "name": "Cala Piteres",
+    "location": {
+      "lat": 38.4540822,
+      "lng": -0.3527689
+    },
+    "lines": []
+  },
+  {
+    "id": "32",
+    "type": "tram",
+    "name": "Terra Mitica",
+    "location": {
+      "lat": 38.5467332,
+      "lng": -0.1589125
+    },
+    "lines": []
+  },
+  {
+    "id": "3",
+    "type": "tram",
+    "name": "Mercado",
+    "location": {
+      "lat": 38.3483041,
+      "lng": -0.4843621
+    },
+    "lines": []
+  },
+  {
+    "id": "3",
+    "type": "tram",
+    "name": "Mercado",
+    "location": {
+      "lat": 38.3483225,
+      "lng": -0.4843724
+    },
+    "lines": []
+  },
+  {
+    "id": "2",
+    "type": "tram",
+    "name": "Alicante - Luceros",
+    "location": {
+      "lat": 38.3459859,
+      "lng": -0.4905968
+    },
+    "lines": []
+  },
+  {
+    "id": "2",
+    "type": "tram",
+    "name": "Alicante - Luceros",
+    "location": {
+      "lat": 38.3460752,
+      "lng": -0.490648
+    },
+    "lines": []
+  },
+  {
+    "id": "33",
+    "type": "tram",
+    "name": "Benidorm",
+    "location": {
+      "lat": 38.5481623,
+      "lng": -0.1351438
+    },
+    "lines": []
+  },
+  {
+    "id": "33",
+    "type": "tram",
+    "name": "Benidorm",
+    "location": {
+      "lat": 38.5482017,
+      "lng": -0.1351381
+    },
+    "lines": []
+  },
+  {
+    "id": "125",
+    "type": "tram",
+    "name": "Benidorm Intermodal",
+    "location": {
+      "lat": 38.5482937,
+      "lng": -0.1233809
+    },
+    "lines": []
+  },
+  {
+    "id": "49",
+    "type": "tram",
+    "name": "Bosc de Diana",
+    "location": {
+      "lat": 38.8346845,
+      "lng": 0.1072117
+    },
+    "lines": []
+  },
+  {
+    "id": "48",
+    "type": "tram",
+    "name": "Pedrera-Vessanes",
+    "location": {
+      "lat": 38.8318119,
+      "lng": 0.1008291
+    },
+    "lines": []
+  },
+  {
+    "id": "46",
+    "type": "tram",
+    "name": "Gata",
+    "location": {
+      "lat": 38.7752417,
+      "lng": 0.0874312
+    },
+    "lines": []
+  },
+  {
+    "id": "50",
+    "type": "tram",
+    "name": "D\u00e9nia",
+    "location": {
+      "lat": 38.839436,
+      "lng": 0.1128331
+    },
+    "lines": []
+  },
+  {
+    "id": "101",
+    "type": "tram",
+    "name": "Porta del Mar",
+    "location": {
+      "lat": 38.345082,
+      "lng": -0.4788414
+    },
+    "lines": []
+  },
+  {
+    "id": "102",
+    "type": "tram",
+    "name": "La Marina",
+    "location": {
+      "lat": 38.3489779,
+      "lng": -0.4729468
+    },
+    "lines": []
+  },
+  {
+    "id": "31",
+    "type": "tram",
+    "name": "Cala Finestrat",
+    "location": {
+      "lat": 38.5406804,
+      "lng": -0.1750154
+    },
+    "lines": []
+  }
+]
