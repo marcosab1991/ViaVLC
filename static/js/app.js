@@ -357,9 +357,18 @@ function renderMarkers(stops) {
         const activeMembers = cluster.members.filter(m => showNetwork[m.type]);
         if (activeMembers.length === 0) return;
         
-        // Prevent duplicate cluster rendering
         const activeIds = activeMembers.map(m => m.id).sort().join('-');
-        if (activeMarkers[activeIds]) return;
+        if (activeMarkers[activeIds]) return; // This exact cluster is already rendered
+        
+        // Clean up any stale subset/superset markers that share members with this new cluster
+        activeMembers.forEach(m => {
+            Object.keys(activeMarkers).forEach(key => {
+                if (key.split('-').includes(m.id)) {
+                    markersLayer.removeLayer(activeMarkers[key]);
+                    delete activeMarkers[key];
+                }
+            });
+        });
         
         let icon;
         const types = [...new Set(activeMembers.map(m => m.type))];
