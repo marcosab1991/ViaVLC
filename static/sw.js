@@ -1,4 +1,4 @@
-const CACHE_NAME = 'viavlc-cache-v2';
+const CACHE_NAME = 'viavlc-cache-v3';
 const urlsToCache = [
   '/',
   '/css/style.css',
@@ -6,8 +6,7 @@ const urlsToCache = [
   '/images/logo.png',
   '/images/icon-192.png',
   '/images/icon-512.png',
-  'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css',
-  'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js'
+  '/manifest.json'
 ];
 
 self.addEventListener('install', event => {
