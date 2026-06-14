@@ -146,8 +146,13 @@ async def get_line_geometry(line: str, type: str = "bus", destination: str = "")
     try:
         # Step 1: Find best matching geometry from lines.db
         geometry = None
+        
+        db_line_ref = line
+        if type == "metro" and db_line_ref.startswith("L"):
+            db_line_ref = db_line_ref[1:]
+            
         async with aiosqlite.connect('lines.db') as db:
-            cursor = await db.execute('SELECT destination, geometry_json FROM routes WHERE ref=? AND type=?', (line, type))
+            cursor = await db.execute('SELECT destination, geometry_json FROM routes WHERE ref=? AND type=?', (db_line_ref, type))
             rows = await cursor.fetchall()
             
             if rows:
