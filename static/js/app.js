@@ -38,6 +38,7 @@ const createIcon = (color) => {
 const busIcon = createIcon('#ef4444');
 const metroIcon = createIcon('#3b82f6');
 const tramIcon = createIcon('#f97316'); // Orange for TRAM
+const metrobusIcon = createIcon('#FFB81C'); // Yellow for Metrobús
 
 // Map click closes popup and search
 map.on('click', () => {
@@ -45,6 +46,61 @@ map.on('click', () => {
 });
 
 const userIcon = createIcon('#10b981'); // Green for user location
+
+function createHybridIcon(color1, color2) {
+    return L.divIcon({
+        className: 'custom-icon',
+        html: `<div style="
+            width: 100%;
+            height: 100%;
+            border-radius: 50%;
+            background: linear-gradient(135deg, ${color1} 50%, ${color2} 50%);
+            border: 2px solid white;
+            box-shadow: 0 0 5px rgba(0,0,0,0.5);
+        "></div>`,
+        iconSize: [16, 16],
+        iconAnchor: [8, 8],
+        popupAnchor: [0, -10]
+    });
+}
+
+function clusterStops(stops) {
+    const clusters = [];
+    const thresholdSq = 0.00000004; // Very small radius (~20 meters)
+    const used = new Set();
+    
+    for (let i = 0; i < stops.length; i++) {
+        if (used.has(stops[i].id)) continue;
+        
+        const cluster = {
+            id: `cluster-${stops[i].id}`,
+            members: [stops[i]],
+            location: { lat: stops[i].location.lat, lng: stops[i].location.lng }
+        };
+        used.add(stops[i].id);
+        
+        for (let j = i + 1; j < stops.length; j++) {
+            if (used.has(stops[j].id)) continue;
+            
+            // Prevent clustering road networks (bus/metrobus) with rail networks (metro/tram)
+            const isIRail = stops[i].type === 'metro' || stops[i].type === 'tram';
+            const isJRail = stops[j].type === 'metro' || stops[j].type === 'tram';
+            if (isIRail !== isJRail) continue;
+            
+            const distSq = Math.pow(stops[i].location.lat - stops[j].location.lat, 2) + 
+                           Math.pow(stops[i].location.lng - stops[j].location.lng, 2);
+            
+            if (distSq < thresholdSq) {
+                // If it's the exact same transport type, maybe keep them separate unless they have same name?
+                // Actually, let's group anything extremely close to simplify the map and aggregate data
+                cluster.members.push(stops[j]);
+                used.add(stops[j].id);
+            }
+        }
+        clusters.push(cluster);
+    }
+    return clusters;
+}
 
 let markersLayer = L.layerGroup().addTo(map);
 let activeMarkers = {}; // Keep track of rendered markers by ID
@@ -72,7 +128,8 @@ let searchTimeout = null;
 let showNetwork = {
     bus: true,
     metro: true,
-    tram: true
+    tram: true,
+    metrobus: true
 };
 
 // Transport Filters (using Legend)
@@ -169,9 +226,10 @@ searchInput.addEventListener('input', (e) => {
                 searchResults.innerHTML = data.data.map(stop => {
                     const isBus = stop.type === 'bus';
                     const isTram = stop.type === 'tram';
-                    const badgeClass = isBus ? 'bus-line' : (isTram ? 'tram-line' : 'metro-line');
-                    const badgeText = isBus ? 'EMT' : (isTram ? 'TRAM' : 'Metro');
-                    const badgeStyle = isTram ? 'background-color: #f97316; color: white; border: none;' : '';
+                    const isMetrobus = stop.type === 'metrobus';
+                    const badgeClass = isBus ? 'bus-line' : (isTram ? 'tram-line' : (isMetrobus ? 'metrobus-line' : 'metro-line'));
+                    const badgeText = isBus ? 'EMT' : (isTram ? 'TRAM' : (isMetrobus ? 'M-Bus' : 'Metro'));
+                    const badgeStyle = isTram ? 'background-color: #f97316; color: white; border: none;' : (isMetrobus ? 'background-color: #FFB81C; color: black; border: none;' : '');
                     
                     return `
                     <div class="search-result-item" data-lat="${stop.location.lat}" data-lng="${stop.location.lng}" data-id="${stop.id}">
@@ -292,57 +350,57 @@ async function fetchStopsInView() {
 
 // Render markers on the map
 function renderMarkers(stops) {
-    // We do NOT clear all markers, instead we add new ones. 
-    // For a real production app we'd remove old ones far from view, but this is fine for now.
+    const clusters = clusterStops(stops);
     
-    let addedCount = 0;
-    
-    stops.forEach(stop => {
-        // Apply network visibility filters
-        if (!showNetwork[stop.type]) return;
+    clusters.forEach(cluster => {
+        // Filter members by active networks
+        const activeMembers = cluster.members.filter(m => showNetwork[m.type]);
+        if (activeMembers.length === 0) return;
         
-        // Prevent duplicate markers
-        if (activeMarkers[stop.id]) return;
+        // Prevent duplicate cluster rendering
+        const activeIds = activeMembers.map(m => m.id).sort().join('-');
+        if (activeMarkers[activeIds]) return;
         
-        const isBus = stop.type === 'bus';
-        const isTram = stop.type === 'tram';
-        const icon = isBus ? busIcon : (isTram ? tramIcon : metroIcon);
-        const typeLabel = isBus ? "EMT Autobús" : (isTram ? "TRAM d'Alacant" : "Metrovalencia");
+        let icon;
+        const types = [...new Set(activeMembers.map(m => m.type))];
+        if (types.length === 1) {
+            const type = types[0];
+            icon = type === 'bus' ? busIcon : (type === 'tram' ? tramIcon : (type === 'metrobus' ? metrobusIcon : metroIcon));
+        } else {
+            if (types.includes('bus') && types.includes('metrobus') && types.length === 2) {
+                icon = createHybridIcon('#ef4444', '#FFB81C');
+            } else if (types.includes('bus') && types.includes('metro')) {
+                icon = createHybridIcon('#ef4444', '#3b82f6');
+            } else {
+                icon = createHybridIcon('#ef4444', '#FFB81C'); // fallback
+            }
+        }
         
-        const marker = L.marker([stop.location.lat, stop.location.lng], { icon });
-        activeMarkers[stop.id] = marker;
-        markersLayer.addLayer(marker);
-        
-        // Prepare initial popup with loading state
-        marker.bindPopup('', {
+        const marker = L.marker([cluster.location.lat, cluster.location.lng], { icon });
+        const popup = L.popup({
             className: 'custom-popup',
             closeButton: false,
             minWidth: 200
-        });
-
+        }).setContent('<div class="loading-pulse">Cargando tiempos...</div>');
+        
+        marker.bindPopup(popup);
+        activeMarkers[activeIds] = marker;
+        markersLayer.addLayer(marker);
+        
         // Event listener for click to fetch real-time ETA
         marker.on('click', async (e) => {
-            await loadStopData(marker, stop);
+            // Content will be updated by loadStopData / loadClusterData
+            if (activeMembers.length === 1) {
+                await loadStopData(marker, activeMembers[0]);
+            } else {
+                await loadClusterData(marker, activeMembers);
+            }
         });
     });
 }
 
-async function loadStopData(marker, stop, filterLine = null) {
-    const popup = marker.getPopup();
-    const isBus = stop.type === 'bus';
-    const isTram = stop.type === 'tram';
-    const typeLabel = isBus ? "EMT Autobús" : (isTram ? "TRAM d'Alacant" : "Metrovalencia");
-    
-    // Set loading content
-    popup.setContent(`
-        <div class="popup-title">${stop.name}</div>
-        <div class="popup-type">${typeLabel}</div>
-        <div class="loading-pulse">Cargando tiempos...</div>
-    `);
-            
 async function fetchDirectBusEta(stopId) {
     try {
-        // Fetch directly from Geoportal to bypass Render blocking AWS IPs!
         const response = await fetch(`https://geoportal.emtvalencia.es/EMT/mapfunctions/MapUtilsPetitions.php?sec=getSAE&parada=${stopId}`);
         if (!response.ok) return { success: false };
         const text = await response.text();
@@ -352,150 +410,230 @@ async function fetchDirectBusEta(stopId) {
         const arrivals = [];
         for (let i = 0; i < buses.length; i++) {
             const bus = buses[i];
-            const lineaNode = bus.getElementsByTagName('linea')[0];
-            const destinoNode = bus.getElementsByTagName('destino')[0];
-            const minutosNode = bus.getElementsByTagName('minutos')[0];
-            const horaLlegada = bus.getElementsByTagName('horaLlegada')[0];
-            const errorNode = bus.getElementsByTagName('error')[0];
-            
-            if (errorNode && errorNode.textContent && errorNode.textContent !== 'null') continue;
-            
-            let timeText = '? min';
-            if (minutosNode && minutosNode.textContent) {
-                let m = minutosNode.textContent;
-                if (m.includes('min.')) timeText = m.replace(' min.', '') + ' min';
-                else if (m.startsWith('Pr')) timeText = '1 min';
-                else timeText = m + ' min';
-            } else if (horaLlegada && horaLlegada.textContent) {
-                timeText = horaLlegada.textContent;
-            }
-            
-            if (lineaNode && destinoNode) {
-                arrivals.push({ line: lineaNode.textContent, destination: destinoNode.textContent, eta: timeText });
+            const linea = bus.getElementsByTagName('linea')[0]?.textContent;
+            const destino = bus.getElementsByTagName('destino')[0]?.textContent;
+            const minutos = bus.getElementsByTagName('minutos')[0]?.textContent;
+            if (linea && destino && minutos) {
+                arrivals.push({
+                    line: linea,
+                    destination: destino.replace('<![CDATA[', '').replace(']]>', ''),
+                    eta: minutos
+                });
             }
         }
         return { success: true, data: arrivals, cached: false };
-    } catch(e) {
+    } catch (e) {
         return { success: false };
     }
 }
 
-async function fetchDirectMetroEta(stopId) {
+async function loadStopData(marker, stop, filterLine = null) {
+    const popup = marker.getPopup();
+    if (!popup) return;
+    const isBus = stop.type === 'bus';
+    const isTram = stop.type === 'tram';
+    const isMetrobus = stop.type === 'metrobus';
+    const typeLabel = isBus ? "EMT Autobús" : (isTram ? "TRAM d'Alacant" : (isMetrobus ? "Metrobús" : "Metrovalencia"));
+    
+    // Set loading content
+    popup.setContent(`
+        <div class="popup-title">${stop.name}</div>
+        <div class="popup-type">${typeLabel}</div>
+        <div class="loading-pulse">Cargando tiempos...</div>
+    `);
+    
     try {
-        const response = await fetch('https://www.metrovalencia.es/wp-admin/admin-ajax.php', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/x-www-form-urlencoded'
-            },
-            body: `action=formularios_ajax&data=action%3Dinfo-estacion%26id%3D${stopId}`
-        });
-        const data = await response.json();
-        if (!data || !data.html) return { success: true, data: [] };
-        
-        const parser = new DOMParser();
-        const doc = parser.parseFromString(data.html, 'text/html');
-        const items = doc.querySelectorAll('.item--proximos');
-        const arrivals = [];
-        items.forEach(item => {
-            const lineEl = item.querySelector('.linea');
-            const destEl = item.querySelector('.nombre-estacion');
-            const timeEl = item.querySelector('.minutos');
-            if (lineEl && destEl && timeEl) {
-                const lineClasses = Array.from(lineEl.classList);
-                let lineStr = 'L?';
-                for (let c of lineClasses) {
-                    if (c.startsWith('linea-') && c !== 'linea-') {
-                        lineStr = 'L' + c.split('-')[1];
+        let data;
+        if (stop.type === 'bus') {
+            data = await fetchDirectBusEta(stop.id);
+        } else {
+            const response = await fetch(`/api/eta?id=${stop.id}&type=${stop.type}`);
+            data = await response.json();
+        }
+        if (data.success) {
+            let linesHtml = '';
+            let arrivals = data.data;
+            
+            if (arrivals.length === 0) {
+                linesHtml = stop.type === 'metrobus' ? '<div class="no-data">Temporización no disponible para Metrobús.</div>' : '<div class="no-data">No hay próximas llegadas en esta parada</div>';
+            } else {
+                const lineClass = isBus ? 'bus-line' : (isTram ? 'tram-line' : (isMetrobus ? 'metrobus-line' : 'metro-line'));
+                linesHtml = arrivals.map(arrival => {
+                    const colorsMap = isTram ? tramColors : metroColors;
+                    let badgeStyle = '';
+                    if (isTram && colorsMap[arrival.line]) badgeStyle = `background-color: ${colorsMap[arrival.line]}; color: white; border: none;`;
+                    else if (!isBus && !isMetrobus && colorsMap[arrival.line]) badgeStyle = `background-color: ${colorsMap[arrival.line]}; color: white; border: none;`;
+                    else if (isMetrobus) badgeStyle = 'background-color: #FFB81C; color: black; border: none;';
+                    
+                    let displayEta = arrival.eta;
+                    if (displayEta.includes(':')) {
+                        const parts = displayEta.split(':');
+                        if (parts.length >= 2) {
+                            const totalMins = parseInt(parts[0]) * 60 + parseInt(parts[1]);
+                            displayEta = `${totalMins} min.`;
+                        }
                     }
-                }
-                arrivals.push({
-                    line: lineStr,
-                    destination: destEl.textContent.trim(),
-                    eta: timeEl.textContent.trim()
-                });
+                    
+                    return `
+                    <div class="arrival-item" onclick="drawRoute('${arrival.line}', '${stop.type}', '${stop.id}', '${(arrival.destination || '').replace(/'/g, "\\'")}')" style="cursor: pointer;" title="Ver Ruta">
+                        <div class="arrival-left">
+                            <span class="line-badge ${lineClass}" style="${badgeStyle}">${arrival.line}</span>
+                            ${arrival.destination ? `<span class="arrival-dest">${arrival.destination}</span>` : ''}
+                        </div>
+                        <span class="eta-time">${displayEta}</span>
+                    </div>
+                    `;
+                }).join('');
             }
-        });
-        return { success: true, data: arrivals, cached: false };
-    } catch(e) {
-        console.error("CORS Error Metro:", e);
-        return { success: false, error: "Erro de CORS ou Conexão" };
+            
+            popup.setContent(`
+                <div class="popup-title">${stop.name}</div>
+                <div class="popup-type">${typeLabel}${data.cached ? ' <span style="color:#10b981; font-size:0.6rem;">(Cached)</span>' : ''}</div>
+                <div class="arrivals-container">
+                    ${linesHtml}
+                </div>
+            `);
+        } else {
+            popup.setContent(`
+                <div class="popup-title">${stop.name}</div>
+                <div class="error-msg">Error al cargar datos</div>
+            `);
+        }
+    } catch (error) {
+        console.error("Error fetching ETA:", error);
+        popup.setContent(`
+            <div class="popup-title">${stop.name}</div>
+            <div class="error-msg">Error al cargar datos</div>
+        `);
     }
 }
 
-            try {
-                let data;
-                if (stop.type === 'bus') {
-                    data = await fetchDirectBusEta(stop.id);
+async function loadClusterData(marker, activeMembers) {
+    const popup = marker.getPopup();
+    
+    // Combine names uniquely
+    const names = [...new Set(activeMembers.map(m => m.name))].join(' / ');
+    const types = [...new Set(activeMembers.map(m => m.type === 'bus' ? 'EMT' : (m.type === 'metrobus' ? 'Metrobús' : (m.type === 'tram' ? 'TRAM' : 'Metrovalencia'))))].join(' + ');
+    
+    popup.setContent(`
+        <div class="popup-title">${names}</div>
+        <div class="popup-type">${types}</div>
+        <div class="loading-pulse">Cargando tiempos...</div>
+    `);
+    
+    let allArrivals = [];
+    let hasError = false;
+    let isCached = false;
+    
+    const promises = activeMembers.map(async (stop) => {
+        try {
+            let data;
+            if (stop.type === 'bus') {
+                data = await fetchDirectBusEta(stop.id);
+                if (data.success && data.data) {
+                    data.data.forEach(arr => arr._parentType = 'bus');
+                    allArrivals.push(...data.data);
                 } else {
-                    // Reverted back to backend to avoid CORS errors
-                    const response = await fetch(`/api/eta?id=${stop.id}&type=${stop.type}`);
-                    data = await response.json();
+                    hasError = true;
                 }
-                
-                if (data.success) {
-                    let linesHtml = '';
-                    
-                    let arrivals = data.data;
-                    
-                    if (arrivals.length === 0) {
-                        linesHtml = '<div class="no-data">No hay próximas llegadas en esta parada</div>';
-                    } else {
-                        const lineClass = isBus ? 'bus-line' : (isTram ? 'tram-line' : 'metro-line');
-                        linesHtml = arrivals.map(arrival => {
-                            const colorsMap = isTram ? tramColors : metroColors;
-                            const badgeStyle = !isBus && colorsMap[arrival.line] ? `background-color: ${colorsMap[arrival.line]}; color: white; border: none;` : '';
-                            return `
-                            <div class="arrival-item" onclick="drawRoute('${arrival.line}', '${stop.type}', '${stop.id}', '${(arrival.destination || '').replace(/'/g, "\\'")}')" style="cursor: pointer;" title="Ver Ruta">
-                                <div class="arrival-left">
-                                    <span class="line-badge ${lineClass}" style="${badgeStyle}">${arrival.line}</span>
-                                    ${arrival.destination ? `<span class="arrival-dest">${arrival.destination}</span>` : ''}
-                                </div>
-                                <span class="eta-time">${arrival.eta}</span>
-                            </div>
-                            `;
-                        }).join('');
-                    }
-                    
-                    popup.setContent(`
-                        <div class="popup-title">${stop.name}</div>
-                        <div class="popup-type">${typeLabel}${data.cached ? ' <span style="color:#10b981; font-size:0.6rem;">(Cached)</span>' : ''}</div>
-                        <div class="arrivals-container">
-                            ${linesHtml}
-                        </div>
-                    `);
+            } else {
+                const response = await fetch(`/api/eta?id=${stop.id}&type=${stop.type}`);
+                data = await response.json();
+                if (data.success && data.data) {
+                    data.data.forEach(arr => arr._parentType = stop.type);
+                    allArrivals.push(...data.data);
+                    if (data.cached) isCached = true;
                 } else {
-                    popup.setContent(`
-                        <div class="popup-title">${stop.name}</div>
-                        <div class="error-msg">Error al cargar datos</div>
-                    `);
+                    hasError = true;
                 }
-            } catch (error) {
-                popup.setContent(`
-                    <div class="popup-title">${stop.name}</div>
-                    <div class="error-msg">Error de conexión</div>
-                `);
             }
+        } catch (e) {
+            hasError = true;
+        }
+    });
+    
+    await Promise.all(promises);
+    
+    if (allArrivals.length === 0) {
+        popup.setContent(`
+            <div class="popup-title">${names}</div>
+            <div class="error-msg">No hay próximas llegadas en esta parada</div>
+        `);
+        return;
+    }
+    
+    // Sort all arrivals by extracted minutes
+    allArrivals.sort((a, b) => {
+        const extractMin = (str) => {
+            if (!str) return 999;
+            if (str.includes(':')) {
+                const parts = str.split(':');
+                if (parts.length >= 2) {
+                    return parseInt(parts[0]) * 60 + parseInt(parts[1]);
+                }
+            }
+            const m = str.match(/\d+/);
+            return m ? parseInt(m[0]) : 999;
+        };
+        return extractMin(a.eta) - extractMin(b.eta);
+    });
+    
+    let linesHtml = allArrivals.map(arrival => {
+        const type = arrival._parentType;
+        const isBus = type === 'bus';
+        const isTram = type === 'tram';
+        const isMetrobus = type === 'metrobus';
+        const lineClass = isBus ? 'bus-line' : (isTram ? 'tram-line' : (isMetrobus ? 'metrobus-line' : 'metro-line'));
+        
+        const colorsMap = isTram ? tramColors : metroColors;
+        let badgeStyle = '';
+        if (arrival.color) badgeStyle = `background-color: #${arrival.color}; color: white; border: none;`;
+        else if (isTram && colorsMap[arrival.line]) badgeStyle = `background-color: ${colorsMap[arrival.line]}; color: white; border: none;`;
+        else if (!isBus && !isMetrobus && colorsMap[arrival.line]) badgeStyle = `background-color: ${colorsMap[arrival.line]}; color: white; border: none;`;
+        else if (isMetrobus) badgeStyle = 'background-color: #FFB81C; color: black; border: none;';
+        
+        const originStop = activeMembers.find(m => m.type === type);
+        
+        let displayEta = arrival.eta;
+        if (displayEta.includes(':')) {
+            const parts = displayEta.split(':');
+            if (parts.length >= 2) {
+                const totalMins = parseInt(parts[0]) * 60 + parseInt(parts[1]);
+                displayEta = `${totalMins} min.`;
+            }
+        }
+        
+        return `
+        <div class="arrival-item" onclick="drawRoute('${arrival.line}', '${type}', '${originStop.id}', '${(arrival.destination || '').replace(/'/g, "\\'")}')" style="cursor: pointer;" title="Ver Ruta">
+            <div class="arrival-left">
+                <span class="line-badge ${lineClass}" style="${badgeStyle}">${arrival.line}</span>
+                ${arrival.destination ? `<span class="arrival-dest">${arrival.destination}</span>` : ''}
+            </div>
+            <span class="eta-time">${displayEta}</span>
+        </div>
+        `;
+    }).join('');
+    
+    popup.setContent(`
+        <div class="popup-title">${names}</div>
+        <div class="popup-type">${types}${isCached ? ' <span style="color:#10b981; font-size:0.6rem;">(Cached)</span>' : ''}</div>
+        <div class="arrivals-container">
+            ${linesHtml}
+        </div>
+    `);
 }
-
 
 // Draw route function
 async function drawRoute(line, type, originStopId = null, destination = null) {
-    // Clear previous
     if (currentRouteLayer) map.removeLayer(currentRouteLayer);
     if (routeStopsLayer) map.removeLayer(routeStopsLayer);
-    
-    // Hide all other markers
     map.removeLayer(markersLayer);
     
-    // Show exit button
     document.getElementById('exit-route-btn').style.display = 'block';
-    
-    // Dim the base map and shrink header on mobile
     document.getElementById('map').classList.add('route-mode-active');
     document.querySelector('.main-header').classList.add('route-mode-active');
-    
-    // Close popup
     map.closePopup();
+    
     const statusText = document.getElementById('status-text');
     statusText.innerText = `Cargando ruta L${line}...`;
     statusText.style.color = '#3b82f6';
@@ -508,29 +646,27 @@ async function drawRoute(line, type, originStopId = null, destination = null) {
         if (!data.success) throw new Error(data.error || 'Failed to fetch route');
         
         const isTram = type === 'tram';
+        const isMetrobus = type === 'metrobus';
         const colorsMap = isTram ? tramColors : metroColors;
-        const defaultColor = isTram ? '#f97316' : '#3b82f6';
+        let routeColor = '#ef4444';
+        if (isTram) routeColor = colorsMap[line] || '#f97316';
+        else if (type === 'metro') routeColor = colorsMap[line] || '#3b82f6';
+        else if (isMetrobus) routeColor = '#FFB81C';
         
-        const routeColor = (type === 'metro' || isTram) ? (colorsMap[line] || defaultColor) : '#ef4444'; // Specific color, or Red for Bus
-        
-        // Draw route line
         if (data.geometry) {
-            // OSRM snapped geometry (Buses)
             currentRouteLayer = L.geoJSON(data.geometry, {
                 style: { color: routeColor, weight: 4, opacity: 0.8 }
             }).addTo(map);
         } else {
-            // Straight lines (Metro)
             const latlngs = data.ordered_stops.map(s => [s.lat, s.lng]);
             currentRouteLayer = L.polyline(latlngs, {
                 color: routeColor,
                 weight: 4,
                 opacity: 0.8,
-                dashArray: '10, 10' // Optional: dashed line to indicate it's not exact street routing
+                dashArray: '10, 10'
             }).addTo(map);
         }
         
-        // Draw stops
         routeStopsLayer = L.layerGroup().addTo(map);
         let originMarker = null;
         
@@ -544,7 +680,6 @@ async function drawRoute(line, type, originStopId = null, destination = null) {
                 fillOpacity: 1
             }).bindTooltip(`${type === 'bus' ? i+1 + '. ' : ''}${stop.name}`);
             
-            // Allow clicking the stop to show its specific ETA
             marker.bindPopup('', {
                 className: 'custom-popup',
                 closeButton: false,
@@ -552,8 +687,6 @@ async function drawRoute(line, type, originStopId = null, destination = null) {
             });
             
             marker.on('click', async (e) => {
-                // The 'stop' object here is missing the 'type' field because the API doesn't return it
-                // We add it manually based on the drawRoute parameter
                 stop.type = type || 'bus'; 
                 await loadStopData(marker, stop, line);
             });
@@ -562,16 +695,12 @@ async function drawRoute(line, type, originStopId = null, destination = null) {
             if (isOrigin) originMarker = marker;
         });
         
-        // Use stops layer bounds since route line is disabled
         if (data.ordered_stops.length > 0) {
             const bounds = L.latLngBounds(data.ordered_stops.map(s => [s.lat, s.lng]));
             map.fitBounds(bounds, { padding: [50, 50] });
-        } else if (currentRouteLayer && typeof currentRouteLayer.getBounds === 'function') {
-            map.fitBounds(currentRouteLayer.getBounds(), { padding: [50, 50] });
         }
         
         if (originMarker) {
-            // Open the popup for the selected station after map centers
             setTimeout(() => {
                 originMarker.openPopup();
                 originMarker.fire('click');
@@ -585,8 +714,6 @@ async function drawRoute(line, type, originStopId = null, destination = null) {
         console.error("Route error:", e);
         statusText.innerText = `Error cargando ruta L${line}`;
         statusText.style.color = '#ef4444';
-        
-        // If error, restore markers
         map.addLayer(markersLayer);
         document.getElementById('map').classList.remove('route-mode-active');
         document.querySelector('.main-header').classList.remove('route-mode-active');

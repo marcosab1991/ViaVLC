@@ -11,6 +11,26 @@ def remove_accents(input_str):
     nfkd_form = unicodedata.normalize('NFKD', input_str)
     return u"".join([c for c in nfkd_form if not unicodedata.combining(c)]).lower()
 
+def fetch_metrobus_stops(c):
+    print("Loading Metrobus stops from local cache...")
+    try:
+        with open('metrobus_stations.json', 'r', encoding='utf-8') as f:
+            stops = json.load(f)
+            
+        inserted = 0
+        for stop in stops:
+            lines_json = json.dumps(stop['lines'])
+            
+            c.execute('''
+            INSERT OR REPLACE INTO stops (id, type, name, name_normalized, lat, lng, lines)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ''', (f"metrobus-{stop['id']}", 'metrobus', stop['name'], remove_accents(stop['name']), stop['lat'], stop['lon'], lines_json))
+            inserted += 1
+            
+        print(f"Loaded {inserted} Metrobus stops into DB.")
+    except Exception as e:
+        print(f"Failed to load Metrobus stops: {e}")
+
 def init_db():
     conn = sqlite3.connect('stops.db')
     c = conn.cursor()
@@ -125,6 +145,7 @@ if __name__ == '__main__':
     
     fetch_emt_stops(c)
     fetch_metro_stops(c)
+    fetch_metrobus_stops(c)
     
     conn.commit()
     conn.close()

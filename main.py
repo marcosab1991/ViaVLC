@@ -62,7 +62,10 @@ async def get_stops(
         async with aiosqlite.connect('stops.db') as db:
             if min_lat is not None and max_lat is not None and min_lng is not None and max_lng is not None:
                 cursor = await db.execute(
-                    'SELECT id, type, name, lat, lng, lines FROM stops WHERE lat >= ? AND lat <= ? AND lng >= ? AND lng <= ?',
+                    '''SELECT id, type, name, lat, lng, lines 
+                       FROM stops 
+                       WHERE lat >= ? AND lat <= ? AND lng >= ? AND lng <= ? 
+                       LIMIT 5000''',
                     (min_lat, max_lat, min_lng, max_lng)
                 )
             else:
@@ -155,11 +158,25 @@ async def get_line_geometry(line: str, type: str = "bus", destination: str = "")
             cursor = await db.execute('SELECT destination, geometry_json FROM routes WHERE ref=? AND type=?', (db_line_ref, type))
             rows = await cursor.fetchall()
             
+            # Fallback for Metrobus: strip trailing letter (e.g. 161A -> 161) if route not found
+            if not rows and type == "metrobus" and db_line_ref and db_line_ref[-1].isalpha():
+                base_ref = "".join([c for c in db_line_ref if c.isdigit()])
+                cursor = await db.execute('SELECT destination, geometry_json FROM routes WHERE ref=? AND type=?', (base_ref, type))
+                rows = await cursor.fetchall()
+                
             if rows:
                 if destination:
                     best_geom = None
                     highest_ratio = -1
                     target_dest = remove_accents(destination.lower())
+                    
+                    aliases = {
+                        "est.del nord": "xativa",
+                        "estacio del nord": "xativa",
+                        "est. del nord": "xativa"
+                    }
+                    if target_dest in aliases:
+                        target_dest = aliases[target_dest]
                     
                     for row_dest, geom_json in rows:
                         db_dest = remove_accents((row_dest or "").lower())
@@ -196,6 +213,16 @@ async def get_line_geometry(line: str, type: str = "bus", destination: str = "")
                 (type, f'%"{line}"%')
             )
             rows = await cursor.fetchall()
+            
+            # Fallback for Metrobus stops: strip trailing letter (e.g. 161A -> 161) if no stops found
+            if not rows and type == "metrobus" and line and line[-1].isalpha():
+                base_line = "".join([c for c in line if c.isdigit()])
+                cursor = await db.execute(
+                    'SELECT id, name, lat, lng FROM stops WHERE type=? AND lines LIKE ? LIMIT 150',
+                    (type, f'%"{base_line}"%')
+                )
+                rows = await cursor.fetchall()
+                
             raw_stops = []
             for row in rows:
                 raw_stops.append({
@@ -290,6 +317,42 @@ def fetch_bus_eta_sync(stop_id: str):
             })
     return arrivals
 
+async def fetch_metrobus_eta(stop_id: str):
+    """
+    Fetch ETA from Metrobus Softour API
+    """
+    try:
+        # Strip the prefix added to prevent DB collision with EMT
+        actual_id = stop_id.replace("metrobus-", "") if stop_id.startswith("metrobus-") else stop_id
+        
+        url = f"https://api.softoursistemas.com/metrobus/estimacion/ocupacion/{actual_id}"
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        resp = await asyncio.to_thread(urllib.request.urlopen, req, timeout=3)
+        data = json.loads(resp.read().decode('utf-8'))
+        
+        arrivals = []
+        for est in data:
+            line = str(est.get('line', ''))
+            dest = str(est.get('route', ''))
+            
+            estimations = est.get('estimations', [])
+            if estimations:
+                # We can loop through all estimations for the same line, or just take the first one
+                for arrival_est in estimations:
+                    mins = str(arrival_est.get('minutesToArrival', '0'))
+                    if mins.isdigit():
+                        mins += " min"
+                    
+                    arrivals.append({
+                        "line": line,
+                        "destination": dest,
+                        "eta": mins
+                    })
+        return arrivals
+    except Exception as e:
+        print(f"Error fetching Metrobus ETA for {stop_id}: {e}")
+        return []
+
 @app.get("/api/eta")
 async def get_eta(id: str, type: str):
     if not id or not type:
@@ -309,6 +372,8 @@ async def get_eta(id: str, type: str):
             arrivals = await fetch_metro_eta(id)
         elif type == "tram":
             arrivals = await fetch_tram_eta(id)
+        elif type == "metrobus":
+            arrivals = await fetch_metrobus_eta(id)
         else:
             return {"success": False, "error": "Unknown transport type"}
         

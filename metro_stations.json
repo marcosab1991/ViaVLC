@@ -1729,5 +1729,82 @@
       "L5",
       "L9"
     ]
+  },
+  {
+    "id": "73",
+    "type": "metro",
+    "name": "Av. del Cid",
+    "location": {
+      "lat": 39.4685471,
+      "lng": -0.3979341
+    },
+    "lines": [
+      "L3",
+      "L5",
+      "L9"
+    ]
+  },
+  {
+    "id": "34",
+    "type": "metro",
+    "name": "Massarrojos",
+    "location": {
+      "lat": 39.53650458,
+      "lng": -0.40303881
+    },
+    "lines": [
+      "L1"
+    ]
+  },
+  {
+    "id": "5",
+    "type": "metro",
+    "name": "L'Alcúdia",
+    "location": {
+      "lat": 39.193255,
+      "lng": -0.510114
+    },
+    "lines": [
+      "L1"
+    ]
+  },
+  {
+    "id": "18",
+    "type": "metro",
+    "name": "Picanya",
+    "location": {
+      "lat": 39.43331,
+      "lng": -0.43718
+    },
+    "lines": [
+      "L1",
+      "L2",
+      "L7"
+    ]
+  },
+  {
+    "id": "93",
+    "type": "metro",
+    "name": "Tarongers - Ernest Lluch",
+    "location": {
+      "lat": 39.4781633,
+      "lng": -0.3395337
+    },
+    "lines": [
+      "L4",
+      "L6"
+    ]
+  },
+  {
+    "id": "115",
+    "type": "metro",
+    "name": "Ll. Llarga - Terramelar",
+    "location": {
+      "lat": 39.5098926,
+      "lng": -0.4304268
+    },
+    "lines": [
+      "L4"
+    ]
   }
 ]

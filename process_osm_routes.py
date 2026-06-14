@@ -52,6 +52,10 @@ print("Processing TRAM routes...")
 tram_routes = process_routes("tram_routes.json", "tram")
 print(f"Loaded {len(tram_routes)} TRAM routes.")
 
+print("Processing Metrobus routes...")
+metrobus_routes = process_routes("metrobus_routes_raw.json", "metrobus")
+print(f"Loaded {len(metrobus_routes)} Metrobus routes.")
+
 print("Saving to lines.db...")
 conn = sqlite3.connect("lines.db")
 c = conn.cursor()
@@ -67,7 +71,7 @@ c.execute('''
 ''')
 c.execute("DELETE FROM routes")
 
-for r in emt_routes + metro_routes + tram_routes:
+for r in emt_routes + metro_routes + tram_routes + metrobus_routes:
     # Build GeoJSON MultiLineString
     geojson = {
         "type": "MultiLineString",
