@@ -399,8 +399,6 @@ async function fetchDirectMetroEta(stopId) {
             }
 }
 
-// Initialize application
-document.addEventListener('DOMContentLoaded', initApp);
 
 // Draw route function
 async function drawRoute(line, type, originStopId = null) {
