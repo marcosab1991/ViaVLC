@@ -519,6 +519,13 @@ window.addEventListener('beforeinstallprompt', (e) => {
     pwaInstallBtn.style.display = 'flex';
 });
 
+// DEBUG/FALLBACK: Show button after 1.5s anyway to test if PWA is active
+setTimeout(() => {
+    if (!isStandalone) {
+        pwaInstallBtn.style.display = 'flex';
+    }
+}, 1500);
+
 pwaInstallBtn.addEventListener('click', async () => {
     if (isIOS) {
         alert("Para instalar en iPhone/iPad:\n1. Toca el botón de 'Compartir' (cuadrado con flecha hacia arriba)\n2. Toca 'Añadir a la pantalla de inicio'");
@@ -532,6 +539,8 @@ pwaInstallBtn.addEventListener('click', async () => {
             pwaInstallBtn.style.display = 'none';
         }
         deferredPrompt = null;
+    } else {
+        alert("El navegador aún no permite la instalación automática. Revisa que estés accediendo con 'https://' o instala manualmente desde el menú del navegador (⋮) -> 'Añadir a la pantalla de inicio'.");
     }
 });
 
