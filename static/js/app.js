@@ -542,7 +542,7 @@ async function drawRoute(line, type, originStopId = null, destination = null) {
                 color: isOrigin ? '#059669' : routeColor,
                 weight: isOrigin ? 3 : 2,
                 fillOpacity: 1
-            }).bindTooltip(`${i+1}. ${stop.name}`);
+            }).bindTooltip(`${type === 'bus' ? i+1 + '. ' : ''}${stop.name}`);
             
             // Allow clicking the stop to show its specific ETA
             marker.bindPopup('', {
