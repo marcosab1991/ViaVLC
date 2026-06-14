@@ -230,6 +230,14 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 async def serve_index():
     return FileResponse("static/index.html")
 
+@app.get("/manifest.json")
+async def serve_manifest():
+    return FileResponse("static/manifest.json")
+
+@app.get("/sw.js")
+async def serve_sw():
+    return FileResponse("static/sw.js")
+
 @app.get("/favicon.png")
 async def serve_favicon():
     return FileResponse("static/favicon.png")
