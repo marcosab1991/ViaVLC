@@ -69,8 +69,8 @@ def fetch_emt_stops(c):
     missing_stop_2289 = {
         "id": "2289",
         "name": "Av. de l'Oest - Roger de Flor (2289)",
-        "lat": 39.4716290,
-        "lng": -0.3811928,
+        "lat": 39.4721202,
+        "lng": -0.3798222,
         "lines": '["62"]'
     }
     c.execute('INSERT OR REPLACE INTO stops (id, type, name, name_normalized, lat, lng, lines) VALUES (?, ?, ?, ?, ?, ?, ?)',
