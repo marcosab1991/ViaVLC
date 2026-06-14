@@ -555,6 +555,12 @@ h1 {
     background: #dc2626;
 }
 
+.exit-route-btn .icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
 .disclaimer {
     font-size: 0.75rem;
     color: var(--text-secondary);

@@ -61,6 +61,19 @@ const searchInput = document.getElementById('search-input');
 const searchResults = document.getElementById('search-results');
 let searchTimeout = null;
 
+const metroColors = {
+    'L1': '#e4be36',
+    'L2': '#b4397f',
+    'L3': '#b11d2f',
+    'L4': '#2b498b',
+    'L5': '#4e886d',
+    'L6': '#817fb3',
+    'L7': '#ce7d28',
+    'L8': '#96c4da',
+    'L9': '#a47e52',
+    'L10': '#a47e52'
+};
+
 // Add Exit Route Button to Map
 const exitRouteBtn = L.control({position: 'topright'});
 exitRouteBtn.onAdd = function(map) {
@@ -357,25 +370,24 @@ async function fetchDirectMetroEta(stopId) {
                 if (data.success) {
                     let linesHtml = '';
                     
-                    // Filter arrivals if filterLine is provided
                     let arrivals = data.data;
-                    if (filterLine) {
-                        arrivals = arrivals.filter(a => a.line === filterLine);
-                    }
                     
                     if (arrivals.length === 0) {
-                        linesHtml = '<div class="no-data">No hay próximas llegadas de esta línea</div>';
+                        linesHtml = '<div class="no-data">No hay próximas llegadas en esta parada</div>';
                     } else {
                         const lineClass = isBus ? 'bus-line' : 'metro-line';
-                        linesHtml = arrivals.map(arrival => `
-                            <div class="arrival-item" onclick="drawRoute('${arrival.line}', '${stop.type}', '${stop.id}')" style="cursor: pointer;" title="Ver Ruta">
+                        linesHtml = arrivals.map(arrival => {
+                            const badgeStyle = !isBus && metroColors[arrival.line] ? `background-color: ${metroColors[arrival.line]}; color: white; border: none;` : '';
+                            return `
+                            <div class="arrival-item" onclick="drawRoute('${arrival.line}', '${stop.type}', '${stop.id}', '${(arrival.destination || '').replace(/'/g, "\\'")}')" style="cursor: pointer;" title="Ver Ruta">
                                 <div class="arrival-left">
-                                    <span class="line-badge ${lineClass}">${arrival.line}</span>
+                                    <span class="line-badge ${lineClass}" style="${badgeStyle}">${arrival.line}</span>
                                     ${arrival.destination ? `<span class="arrival-dest">${arrival.destination}</span>` : ''}
                                 </div>
                                 <span class="eta-time">${arrival.eta}</span>
                             </div>
-                        `).join('');
+                            `;
+                        }).join('');
                     }
                     
                     popup.setContent(`
@@ -401,7 +413,7 @@ async function fetchDirectMetroEta(stopId) {
 
 
 // Draw route function
-async function drawRoute(line, type, originStopId = null) {
+async function drawRoute(line, type, originStopId = null, destination = null) {
     // Clear previous
     if (currentRouteLayer) map.removeLayer(currentRouteLayer);
     if (routeStopsLayer) map.removeLayer(routeStopsLayer);
@@ -419,27 +431,38 @@ async function drawRoute(line, type, originStopId = null) {
     // Close popup
     map.closePopup();
     const statusText = document.getElementById('status-text');
-    statusText.innerText = `Cargando ruta de L${line}...`;
+    statusText.innerText = `Cargando ruta L${line}...`;
     statusText.style.color = '#3b82f6';
     
     try {
-        const response = await fetch(`/api/line_geometry?line=${line}`);
+        const url = `/api/line_geometry?line=${line}&type=${type}${destination ? '&destination=' + encodeURIComponent(destination) : ''}`;
+        const response = await fetch(url);
         const data = await response.json();
         
         if (!data.success) throw new Error(data.error);
         
-        // Draw route line - DISABLED due to bidirectional zig-zag issues without GTFS
-        /*
-        currentRouteLayer = L.geoJSON(data.geometry, {
-            style: { color: '#ef4444', weight: 4, opacity: 0.8 }
-        }).addTo(map);
-        */
+        const routeColor = type === 'metro' ? (metroColors[line] || '#3b82f6') : '#ef4444'; // Specific Metro color, or Red for Bus
+        
+        // Draw route line
+        if (data.geometry) {
+            // OSRM snapped geometry (Buses)
+            currentRouteLayer = L.geoJSON(data.geometry, {
+                style: { color: routeColor, weight: 4, opacity: 0.8 }
+            }).addTo(map);
+        } else {
+            // Straight lines (Metro)
+            const latlngs = data.ordered_stops.map(s => [s.lat, s.lng]);
+            currentRouteLayer = L.polyline(latlngs, {
+                color: routeColor,
+                weight: 4,
+                opacity: 0.8,
+                dashArray: '10, 10' // Optional: dashed line to indicate it's not exact street routing
+            }).addTo(map);
+        }
         
         // Draw stops
         routeStopsLayer = L.layerGroup().addTo(map);
         let originMarker = null;
-        
-        const routeColor = type === 'metro' ? '#3b82f6' : '#ef4444'; // Blue for Metro, Red for Bus
         
         data.ordered_stops.forEach((stop, i) => {
             const isOrigin = originStopId && (stop.id == originStopId || stop.id == `metro-${originStopId}` || `metro-${stop.id}` == originStopId);
@@ -459,7 +482,6 @@ async function drawRoute(line, type, originStopId = null) {
             });
             
             marker.on('click', async (e) => {
-                map.setView([stop.lat, stop.lng], 18);
                 // The 'stop' object here is missing the 'type' field because the API doesn't return it
                 // We add it manually based on the drawRoute parameter
                 stop.type = type || 'bus'; 

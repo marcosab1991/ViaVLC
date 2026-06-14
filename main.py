@@ -1,6 +1,9 @@
 import asyncio
 import json
+import math
 import re
+import urllib.request
+import difflib
 import time
 import urllib.parse
 import aiohttp
@@ -70,7 +73,7 @@ async def get_stops(
             stops = []
             for row in rows:
                 stops.append({
-                    "id": str(row[0]).replace("metro-", ""),  # Strip our internal prefix for the client
+                    "id": str(row[0]),  # Keep the prefix to prevent ID collisions with EMT
                     "type": row[1],
                     "name": row[2],
                     "location": {"lat": row[3], "lng": row[4]},
@@ -106,7 +109,7 @@ async def search_stops(q: str = Query(..., min_length=2)):
             stops = []
             for row in rows:
                 stops.append({
-                    "id": str(row[0]).replace("metro-", ""),
+                    "id": str(row[0]),
                     "type": row[1],
                     "name": row[2],
                     "location": {"lat": row[3], "lng": row[4]},
@@ -116,40 +119,82 @@ async def search_stops(q: str = Query(..., min_length=2)):
     except Exception as e:
         return {"success": False, "error": str(e)}
 
+def nearest_neighbor_sort(stops):
+    if not stops: return []
+    # Find the extremum point to start (e.g., minimum lat + lng)
+    unvisited = sorted(stops, key=lambda s: s['lat'] + s['lng'])
+    ordered = [unvisited.pop(0)]
+    
+    while unvisited:
+        last = ordered[-1]
+        nearest_idx = 0
+        min_dist = float('inf')
+        for i, s in enumerate(unvisited):
+            dist = math.hypot(s['lat'] - last['lat'], s['lng'] - last['lng'])
+            if dist < min_dist:
+                min_dist = dist
+                nearest_idx = i
+        ordered.append(unvisited.pop(nearest_idx))
+    return ordered
+
 @app.get("/api/line_geometry")
-async def get_line_geometry(line: str):
+async def get_line_geometry(line: str, type: str = "bus", destination: str = ""):
     """
-    Get OSRM TSP street route and ordered stops for a specific bus line.
+    Offline geometry via lines.db (extracted from OSM).
+    Matches the requested destination string to the closest OSM destination.
     """
     try:
+        # Step 1: Find best matching geometry from lines.db
+        geometry = None
+        if destination:
+            async with aiosqlite.connect('lines.db') as db:
+                cursor = await db.execute('SELECT destination, geometry_json FROM routes WHERE ref=? AND type=?', (line, type))
+                rows = await cursor.fetchall()
+                
+                if rows:
+                    best_geom = None
+                    highest_ratio = -1
+                    target_dest = remove_accents(destination.lower())
+                    
+                    for row_dest, geom_json in rows:
+                        db_dest = remove_accents((row_dest or "").lower())
+                        ratio = difflib.SequenceMatcher(None, db_dest, target_dest).ratio()
+                        if ratio > highest_ratio:
+                            highest_ratio = ratio
+                            best_geom = geom_json
+                    
+                    if best_geom:
+                        geometry = json.loads(best_geom)
+        
+        # Step 2: Fallback ordered stops (if needed by frontend to draw points)
         async with aiosqlite.connect('stops.db') as db:
             cursor = await db.execute(
                 'SELECT id, name, lat, lng FROM stops WHERE lines LIKE ? LIMIT 150',
                 (f'%"{line}"%',)
             )
             rows = await cursor.fetchall()
-            
-            if len(rows) == 0:
-                return {"success": False, "error": "Not enough stops found for line."}
-                
-            # Bypass OSRM entirely since the frontend no longer draws the street geometry
-            # This prevents OSRM from dropping off-road Metro stations
-            ordered_stops = []
+            raw_stops = []
             for row in rows:
-                ordered_stops.append({
+                raw_stops.append({
                     "id": str(row[0]),
                     "name": row[1],
                     "lat": row[2],
                     "lng": row[3]
                 })
-                
-            return {
-                "success": True, 
-                "geometry": None,
-                "ordered_stops": ordered_stops
-            }
+            
+            # Since we have the exact geometry from OSM, we don't strictly need to order stops perfectly 
+            # for drawing the line anymore. But we return them ordered by Nearest Neighbor for the markers.
+            ordered_stops = nearest_neighbor_sort(raw_stops)
+
+        return {
+            "success": True, 
+            "geometry": geometry,
+            "ordered_stops": ordered_stops
+        }
             
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         return {"success": False, "error": str(e)}
 
 async def fetch_metro_eta(stop_id: str):
