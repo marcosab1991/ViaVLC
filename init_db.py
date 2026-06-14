@@ -65,6 +65,18 @@ def fetch_emt_stops(c):
                       (stop_id, 'bus', name, name_normalized, lat, lng, lines_json))
             count += 1
             
+    # Hardcode missing stop 2289 (Avinguda de l'Oest - Roger de Flor)
+    missing_stop_2289 = {
+        "id": "2289",
+        "name": "Av. de l'Oest - Roger de Flor (2289)",
+        "lat": 39.4716290,
+        "lng": -0.3811928,
+        "lines": '["62"]'
+    }
+    c.execute('INSERT OR REPLACE INTO stops (id, type, name, name_normalized, lat, lng, lines) VALUES (?, ?, ?, ?, ?, ?, ?)',
+              (missing_stop_2289["id"], 'bus', missing_stop_2289["name"], remove_accents(missing_stop_2289["name"]), missing_stop_2289["lat"], missing_stop_2289["lng"], missing_stop_2289["lines"]))
+    count += 1
+    
     print(f"Inserted {count} EMT stops into DB.")
 
 def fetch_metro_stops(c):
