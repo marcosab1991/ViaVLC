@@ -574,14 +574,37 @@ async def get_journey(orig_lat: float, orig_lng: float, dest_lat: float, dest_ln
                     })
                     
         # Now process ETAs
+        # 1. Sort routes by theoretical time (walk1 + baseline transit + walk2) and limit to top 15 to avoid massive API spam
+        routes_found.sort(key=lambda x: x['orig_stop']['walk'] + x['t_baseline'] + x['dest_stop']['walk'])
+        routes_found = routes_found[:15]
+        
+        # 2. Extract unique stops to fetch ETAs concurrently
+        stops_to_fetch = set()
+        for r in routes_found:
+            stops_to_fetch.add((r['orig_stop']['id'], r['type']))
+            stops_to_fetch.add((r['dest_stop']['id'], r['type']))
+            
+        import asyncio
+        async def fetch_eta_cached(sid, stype):
+            res = await get_eta(sid, stype)
+            return (sid, res)
+            
+        fetch_tasks = [fetch_eta_cached(sid, stype) for sid, stype in stops_to_fetch]
+        eta_results = await asyncio.gather(*fetch_tasks, return_exceptions=True)
+        
+        eta_cache = {}
+        for res in eta_results:
+            if not isinstance(res, Exception):
+                sid, data = res
+                eta_cache[sid] = data
+                
         valid_routes = []
         for r in routes_found:
             t_type = r['type']
             l_ref = r['line']
             
-            # Use the cached / internal ETA fetcher
-            eta_orig_res = await get_eta(r['orig_stop']['id'], t_type)
-            eta_dest_res = await get_eta(r['dest_stop']['id'], t_type)
+            eta_orig_res = eta_cache.get(r['orig_stop']['id'], {})
+            eta_dest_res = eta_cache.get(r['dest_stop']['id'], {})
             
             o_etas = eta_orig_res.get('data', []) if eta_orig_res.get('success') else []
             d_etas = eta_dest_res.get('data', []) if eta_dest_res.get('success') else []
