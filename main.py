@@ -574,9 +574,9 @@ async def get_journey(orig_lat: float, orig_lng: float, dest_lat: float, dest_ln
                     })
                     
         # Now process ETAs
-        # 1. Sort routes by theoretical time (walk1 + baseline transit + walk2) and limit to top 15 to avoid massive API spam
+        # 1. Sort routes by theoretical time (walk1 + baseline transit + walk2) and limit to top 5 to avoid massive API spam
         routes_found.sort(key=lambda x: x['orig_stop']['walk'] + x['t_baseline'] + x['dest_stop']['walk'])
-        routes_found = routes_found[:15]
+        routes_found = routes_found[:5]
         
         # 2. Extract unique stops to fetch ETAs concurrently
         stops_to_fetch = set()
@@ -586,8 +586,13 @@ async def get_journey(orig_lat: float, orig_lng: float, dest_lat: float, dest_ln
             
         import asyncio
         async def fetch_eta_cached(sid, stype):
-            res = await get_eta(sid, stype)
-            return (sid, res)
+            try:
+                # Hard timeout of 4 seconds to prevent the server from getting stuck forever!
+                res = await asyncio.wait_for(get_eta(sid, stype), timeout=4.0)
+                return (sid, res)
+            except Exception as e:
+                print(f"Timeout or error fetching ETA for {stype} {sid}: {e}")
+                return (sid, {"success": True, "data": []})
             
         fetch_tasks = [fetch_eta_cached(sid, stype) for sid, stype in stops_to_fetch]
         eta_results = await asyncio.gather(*fetch_tasks, return_exceptions=True)
