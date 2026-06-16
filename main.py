@@ -643,9 +643,10 @@ async def get_journey(orig_lat: float, orig_lng: float, dest_lat: float, dest_ln
                                 is_realtime = not is_schedule_data # Only true if it's actual GPS real-time
                                 
             if best_t_wait is None:
-                # User requested to ONLY show routes with a real or scheduled ETA at the origin stop!
-                continue
-                
+                # API Timeout or no live data: fallback to an estimated average wait time of 10 minutes
+                best_t_wait = 10
+                best_t_transit = r['t_baseline']
+                is_realtime = False
             r['t_wait'] = best_t_wait
             r['t_transit'] = best_t_transit
             r['t_total'] = r['orig_stop']['walk'] + best_t_wait + best_t_transit + r['dest_stop']['walk']
