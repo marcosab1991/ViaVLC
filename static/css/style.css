@@ -590,5 +590,317 @@ h1 {
     opacity: 0.8;
 }
 
+/* Journey Planner UI */
+.open-journey-btn {
+    position: absolute;
+    bottom: 96px;
+    left: 24px;
+    z-index: 1000;
+    display: flex;
+    align-items: center;
+    padding: 12px 20px;
+    color: white;
+    background: #10b981; /* Emerald green for routing */
+    border: none;
+    cursor: pointer;
+    border-radius: 30px;
+    box-shadow: 0 4px 15px rgba(16, 185, 129, 0.4);
+    transition: transform 0.2s, background 0.2s;
+}
 
+.open-journey-btn:hover {
+    background: #059669;
+    transform: translateY(-2px);
+}
 
+.journey-panel {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    z-index: 1001;
+    border-radius: 20px 20px 0 0;
+    padding: 24px;
+    max-height: 85vh;
+    overflow-y: auto;
+    transition: transform 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.journey-panel.hidden {
+    transform: translateY(100%);
+}
+
+@media (min-width: 768px) {
+    .journey-panel {
+        bottom: 24px;
+        left: 24px;
+        right: auto;
+        width: 380px;
+        border-radius: 20px;
+    }
+    .journey-panel.hidden {
+        transform: translateX(-150%);
+    }
+}
+
+.journey-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+}
+
+.close-btn {
+    background: none;
+    border: none;
+    color: var(--text-secondary);
+    font-size: 24px;
+    cursor: pointer;
+    padding: 0 8px;
+}
+
+.close-btn:hover {
+    color: var(--text-primary);
+}
+
+.journey-inputs {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.input-group {
+    display: flex;
+    align-items: center;
+    background: rgba(0, 0, 0, 0.2);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 10px;
+    padding: 4px 12px;
+}
+
+.input-group .icon {
+    font-size: 1.2rem;
+    margin-right: 8px;
+}
+
+.input-group input {
+    flex: 1;
+    background: transparent;
+    border: none;
+    color: var(--text-primary);
+    padding: 10px 0;
+    font-size: 1rem;
+    outline: none;
+    font-family: var(--font-family);
+}
+
+.action-btn {
+    background: var(--accent-metro);
+    color: white;
+    border: none;
+    padding: 14px;
+    border-radius: 10px;
+    font-weight: 600;
+    font-size: 1rem;
+    cursor: pointer;
+    margin-top: 8px;
+    transition: background 0.2s;
+    font-family: var(--font-family);
+}
+
+.action-btn:hover {
+    background: #2563eb;
+}
+
+.journey-results {
+    margin-top: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.route-card {
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 12px;
+    padding: 16px;
+    cursor: pointer;
+    transition: background 0.2s;
+}
+
+.route-card:hover {
+    background: rgba(255, 255, 255, 0.1);
+}
+
+.route-card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+}
+
+.route-badge {
+    display: inline-block;
+    padding: 4px 10px;
+    border-radius: 20px;
+    font-weight: bold;
+    font-size: 0.9rem;
+    color: white;
+}
+
+.route-time {
+    font-size: 1.2rem;
+    font-weight: 700;
+    color: #10b981;
+}
+
+.route-details {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    font-size: 0.9rem;
+    color: var(--text-secondary);
+}
+
+.route-leg {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.realtime-indicator {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 0.8rem;
+    color: #10b981;
+    margin-top: 8px;
+}
+
+.realtime-indicator .pulse {
+    width: 6px;
+    height: 6px;
+}
+
+/* Arrivals Container with scrolling for Mobile */
+.arrivals-container {
+    max-height: 140px; /* Approximately 3 items */
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding-right: 5px;
+    margin-top: 8px;
+    border-radius: 4px;
+}
+
+/* Elegant scrollbar for arrivals container */
+.arrivals-container::-webkit-scrollbar {
+    width: 6px;
+}
+
+.arrivals-container::-webkit-scrollbar-track {
+    background: rgba(0, 0, 0, 0.05);
+    border-radius: 3px;
+}
+
+.arrivals-container::-webkit-scrollbar-thumb {
+    background: rgba(0, 0, 0, 0.2);
+    border-radius: 3px;
+}
+
+.arrivals-container::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.4);
+}
+
+/* Autocomplete Styles */
+.autocomplete-wrapper {
+    position: relative;
+    width: 100%;
+}
+
+.autocomplete-dropdown {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    background: var(--glass-bg);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid var(--glass-border);
+    border-radius: 12px;
+    margin-top: 4px;
+    padding: 0;
+    list-style: none;
+    max-height: 200px;
+    overflow-y: auto;
+    z-index: 1000;
+    box-shadow: var(--glass-shadow);
+}
+
+.autocomplete-dropdown.hidden {
+    display: none;
+}
+
+.autocomplete-item {
+    padding: 10px 12px;
+    cursor: pointer;
+    font-size: 13px;
+    color: var(--text-primary);
+    border-bottom: 1px solid var(--glass-border);
+    transition: background 0.2s ease, color 0.2s ease;
+}
+
+.autocomplete-item:last-child {
+    border-bottom: none;
+}
+
+.autocomplete-item:hover {
+    background: rgba(255, 184, 28, 0.15);
+    color: #FFB81C;
+}
+
+.autocomplete-item.loading {
+    color: var(--text-secondary);
+    text-align: center;
+    cursor: default;
+}
+
+.autocomplete-item.loading:hover {
+    background: none;
+    color: var(--text-secondary);
+}
+
+/* Context Menu / Long Press Styles */
+.map-context-menu {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 4px;
+}
+
+.context-menu-btn {
+    background: var(--glass-bg);
+    border: 1px solid var(--glass-border);
+    color: var(--text-primary);
+    padding: 8px 12px;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.context-menu-btn:hover {
+    background: rgba(255, 184, 28, 0.15);
+    border-color: rgba(255, 184, 28, 0.4);
+    color: #e6a000;
+}
+
+@media (prefers-color-scheme: dark) {
+    .context-menu-btn:hover {
+        background: rgba(255, 184, 28, 0.2);
+        color: #FFB81C;
+    }
+}

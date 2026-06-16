@@ -464,8 +464,9 @@ async function loadStopData(marker, stop, filterLine = null) {
             let arrivals = data.data;
             
             if (arrivals.length === 0) {
-                linesHtml = stop.type === 'metrobus' ? '<div class="no-data">Temporización no disponible para Metrobús.</div>' : '<div class="no-data">No hay próximas llegadas en esta parada</div>';
+                linesHtml = stop.type === 'metrobus' ? '<div class="no-data">No hay estimativas teóricas ni en tiempo real para las próximas horas.</div>' : '<div class="no-data">No hay próximas llegadas en tiempo real en esta parada.</div>';
             } else {
+                const hasTheoretical = arrivals.some(a => a.realtime === false);
                 const lineClass = isBus ? 'bus-line' : (isTram ? 'tram-line' : (isMetrobus ? 'metrobus-line' : 'metro-line'));
                 linesHtml = arrivals.map(arrival => {
                     const colorsMap = isTram ? tramColors : metroColors;
@@ -475,12 +476,24 @@ async function loadStopData(marker, stop, filterLine = null) {
                     else if (isMetrobus) badgeStyle = 'background-color: #FFB81C; color: black; border: none;';
                     
                     let displayEta = arrival.eta;
+                    let iconHtml = arrival.realtime === false 
+                        ? '<span style="margin-right:4px; font-size:12px;" title="Horário Teórico">📅</span> ' 
+                        : '<span style="margin-right:4px; font-size:12px; color:#10b981;" title="Tempo Real (GPS)">📡</span> ';
+                    
                     if (displayEta.includes(':')) {
                         const parts = displayEta.split(':');
                         if (parts.length >= 2) {
-                            const totalMins = parseInt(parts[0]) * 60 + parseInt(parts[1]);
-                            displayEta = `${totalMins} min.`;
+                            const now = new Date();
+                            const h = parseInt(parts[0]);
+                            const m = parseInt(parts[1]);
+                            let waitMins = (h - now.getHours()) * 60 + (m - now.getMinutes());
+                            if (waitMins < -12 * 60) waitMins += 24 * 60; // if it's tomorrow
+                            else if (waitMins < 0 && waitMins > -12 * 60) waitMins = 0; // if it just passed
+                            displayEta = `${waitMins} min`;
                         }
+                    } else if (displayEta.match(/^\d+$/) || displayEta.match(/^\d+\s*min/)) {
+                        const m = displayEta.match(/\d+/);
+                        if (m) displayEta = `${m[0]} min`;
                     }
                     
                     return `
@@ -489,10 +502,14 @@ async function loadStopData(marker, stop, filterLine = null) {
                             <span class="line-badge ${lineClass}" style="${badgeStyle}">${arrival.line}</span>
                             ${arrival.destination ? `<span class="arrival-dest">${arrival.destination}</span>` : ''}
                         </div>
-                        <span class="eta-time">${displayEta}</span>
+                        <span class="eta-time">${iconHtml}${displayEta}</span>
                     </div>
                     `;
                 }).join('');
+                
+                if (hasTheoretical) {
+                    linesHtml += '<div style="font-size:11px; color:#666; margin-top:8px; text-align:center;">📅 Horarios teóricos planeados (GPS inactivo)</div>';
+                }
             }
             
             popup.setContent(`
@@ -563,22 +580,38 @@ async function loadClusterData(marker, activeMembers) {
     
     await Promise.all(promises);
     
+    // Deduplicate arrivals (in case multiple stops in the cluster return the same data)
+    const uniqueArrivals = [];
+    const seenArrivals = new Set();
+    allArrivals.forEach(arr => {
+        const key = `${arr.line}-${arr.destination}-${arr.eta}`;
+        if (!seenArrivals.has(key)) {
+            seenArrivals.add(key);
+            uniqueArrivals.push(arr);
+        }
+    });
+    allArrivals = uniqueArrivals;
+    
     if (allArrivals.length === 0) {
         popup.setContent(`
             <div class="popup-title">${names}</div>
-            <div class="error-msg">No hay próximas llegadas en esta parada</div>
+            <div class="error-msg">No hay llegadas en tiempo real para estas paradas.</div>
         `);
         return;
     }
     
-    // Sort all arrivals by extracted minutes
     allArrivals.sort((a, b) => {
         const extractMin = (str) => {
             if (!str) return 999;
+            const lowerStr = str.toLowerCase();
+            if (lowerStr.includes('pròxim') || lowerStr.includes('proxim') || lowerStr.includes('próxim')) return 0;
             if (str.includes(':')) {
                 const parts = str.split(':');
                 if (parts.length >= 2) {
-                    return parseInt(parts[0]) * 60 + parseInt(parts[1]);
+                    const now = new Date();
+                    let waitMins = (parseInt(parts[0]) - now.getHours()) * 60 + (parseInt(parts[1]) - now.getMinutes());
+                    if (waitMins < -12 * 60) waitMins += 24 * 60;
+                    return waitMins;
                 }
             }
             const m = str.match(/\d+/);
@@ -586,46 +619,65 @@ async function loadClusterData(marker, activeMembers) {
         };
         return extractMin(a.eta) - extractMin(b.eta);
     });
-    
+
+    let hasTheoretical = false;
+
     let linesHtml = allArrivals.map(arrival => {
-        const type = arrival._parentType;
-        const isBus = type === 'bus';
-        const isTram = type === 'tram';
-        const isMetrobus = type === 'metrobus';
-        const lineClass = isBus ? 'bus-line' : (isTram ? 'tram-line' : (isMetrobus ? 'metrobus-line' : 'metro-line'));
+        let isBus = arrival._parentType === 'bus';
+        let isTram = arrival._parentType === 'tram';
+        let isMetrobus = arrival._parentType === 'metrobus';
+        let isMetro = arrival._parentType === 'metro';
         
+        if (arrival.realtime === false) hasTheoretical = true;
+        
+        const lineClass = isBus ? 'bus-line' : (isTram ? 'tram-line' : (isMetrobus ? 'metrobus-line' : 'metro-line'));
         const colorsMap = isTram ? tramColors : metroColors;
         let badgeStyle = '';
-        if (arrival.color) badgeStyle = `background-color: #${arrival.color}; color: white; border: none;`;
-        else if (isTram && colorsMap[arrival.line]) badgeStyle = `background-color: ${colorsMap[arrival.line]}; color: white; border: none;`;
+        if (isTram && colorsMap[arrival.line]) badgeStyle = `background-color: ${colorsMap[arrival.line]}; color: white; border: none;`;
         else if (!isBus && !isMetrobus && colorsMap[arrival.line]) badgeStyle = `background-color: ${colorsMap[arrival.line]}; color: white; border: none;`;
         else if (isMetrobus) badgeStyle = 'background-color: #FFB81C; color: black; border: none;';
         
-        const originStop = activeMembers.find(m => m.type === type);
-        
         let displayEta = arrival.eta;
+        let iconHtml = arrival.realtime === false 
+            ? '<span style="margin-right:4px; font-size:12px;" title="Horário Teórico">📅</span> ' 
+            : '<span style="margin-right:4px; font-size:12px; color:#10b981;" title="Tempo Real (GPS)">📡</span> ';
+        
         if (displayEta.includes(':')) {
             const parts = displayEta.split(':');
             if (parts.length >= 2) {
-                const totalMins = parseInt(parts[0]) * 60 + parseInt(parts[1]);
-                displayEta = `${totalMins} min.`;
+                const now = new Date();
+                const h = parseInt(parts[0]);
+                const m = parseInt(parts[1]);
+                let waitMins = (h - now.getHours()) * 60 + (m - now.getMinutes());
+                if (waitMins < -12 * 60) waitMins += 24 * 60; // tomorrow
+                else if (waitMins < 0 && waitMins > -12 * 60) waitMins = 0;
+                displayEta = `${waitMins} min`;
             }
+        } else if (displayEta.match(/^\d+$/) || displayEta.match(/^\d+\s*min/)) {
+            const match = displayEta.match(/\d+/);
+            if (match) displayEta = `${match[0]} min`;
         }
         
         return `
-        <div class="arrival-item" onclick="drawRoute('${arrival.line}', '${type}', '${originStop.id}', '${(arrival.destination || '').replace(/'/g, "\\'")}')" style="cursor: pointer;" title="Ver Ruta">
+        <div class="arrival-item">
             <div class="arrival-left">
                 <span class="line-badge ${lineClass}" style="${badgeStyle}">${arrival.line}</span>
                 ${arrival.destination ? `<span class="arrival-dest">${arrival.destination}</span>` : ''}
             </div>
-            <span class="eta-time">${displayEta}</span>
+            <span class="eta-time">${iconHtml}${displayEta}</span>
         </div>
         `;
     }).join('');
     
+    if (hasTheoretical) {
+        linesHtml += '<div style="font-size:11px; color:#666; margin-top:8px; text-align:center;">📅 Horários teóricos | 📡 Tempo real (GPS)</div>';
+    } else {
+        linesHtml += '<div style="font-size:11px; color:#666; margin-top:8px; text-align:center;">📡 Tempos reais baseados em GPS</div>';
+    }
+
     popup.setContent(`
         <div class="popup-title">${names}</div>
-        <div class="popup-type">${types}${isCached ? ' <span style="color:#10b981; font-size:0.6rem;">(Cached)</span>' : ''}</div>
+        <div class="popup-type">Varias paradas agrupadas</div>
         <div class="arrivals-container">
             ${linesHtml}
         </div>
@@ -788,3 +840,235 @@ if ('serviceWorker' in navigator) {
     });
 }
 
+// ============================================
+// JOURNEY PLANNER LOGIC
+// ============================================
+
+const openJourneyBtn = document.getElementById('open-journey-btn');
+const closeJourneyBtn = document.getElementById('close-journey-btn');
+const journeyPanel = document.getElementById('journey-panel');
+const journeyOriginInput = document.getElementById('journey-origin');
+const journeyDestInput = document.getElementById('journey-dest');
+const journeySearchBtn = document.getElementById('journey-search-btn');
+const journeyResultsDiv = document.getElementById('journey-results');
+
+openJourneyBtn.addEventListener('click', () => {
+    journeyPanel.classList.remove('hidden');
+});
+
+closeJourneyBtn.addEventListener('click', () => {
+    journeyPanel.classList.add('hidden');
+});
+
+async function geocodeNominatim(query) {
+    if (!query) return null;
+    const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query + ', Valencia')}&format=json&limit=1`;
+    try {
+        const res = await fetch(url);
+        const data = await res.json();
+        if (data && data.length > 0) {
+            return { lat: parseFloat(data[0].lat), lng: parseFloat(data[0].lon) };
+        }
+    } catch (e) {
+        console.error("Geocoding failed:", e);
+    }
+    return null;
+}
+
+// Autocomplete Setup
+function setupAutocomplete(inputId, dropdownId) {
+    const input = document.getElementById(inputId);
+    const dropdown = document.getElementById(dropdownId);
+    let timeout = null;
+
+    input.addEventListener('input', (e) => {
+        const query = e.target.value.trim();
+        // Clear saved dataset if user types manually
+        if (input.dataset.query !== query) {
+            delete input.dataset.lat;
+            delete input.dataset.lng;
+        }
+
+        if (query.length < 3) {
+            dropdown.classList.add('hidden');
+            return;
+        }
+
+        clearTimeout(timeout);
+        timeout = setTimeout(async () => {
+            dropdown.innerHTML = '<li class="autocomplete-item loading">Buscando...</li>';
+            dropdown.classList.remove('hidden');
+            
+            try {
+                const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&viewbox=-0.44,39.52,-0.30,39.42&bounded=1&limit=5`;
+                const res = await fetch(url);
+                const data = await res.json();
+                
+                if (data && data.length > 0) {
+                    dropdown.innerHTML = data.map(item => `
+                        <li class="autocomplete-item" data-lat="${item.lat}" data-lon="${item.lon}" data-name="${item.display_name.replace(/"/g, '&quot;')}">
+                            ${item.display_name.split(',')[0]} <span style="font-size:11px; color:#888;">${item.display_name.split(',').slice(1,3).join(',')}</span>
+                        </li>
+                    `).join('');
+                    
+                    dropdown.querySelectorAll('.autocomplete-item').forEach(li => {
+                        li.addEventListener('click', () => {
+                            input.value = li.getAttribute('data-name');
+                            input.dataset.query = input.value;
+                            input.dataset.lat = li.getAttribute('data-lat');
+                            input.dataset.lng = li.getAttribute('data-lon');
+                            dropdown.classList.add('hidden');
+                        });
+                    });
+                } else {
+                    dropdown.innerHTML = '<li class="autocomplete-item loading">Sin resultados</li>';
+                }
+            } catch (e) {
+                dropdown.innerHTML = '<li class="autocomplete-item loading">Error de conexión</li>';
+            }
+        }, 400);
+    });
+
+    document.addEventListener('click', (e) => {
+        if (!input.contains(e.target) && !dropdown.contains(e.target)) {
+            dropdown.classList.add('hidden');
+        }
+    });
+}
+
+setupAutocomplete('journey-origin', 'origin-autocomplete');
+setupAutocomplete('journey-dest', 'dest-autocomplete');
+
+// Map Context Menu
+let contextMenuPopup = null;
+
+map.on('contextmenu', (e) => {
+    if (contextMenuPopup) map.closePopup(contextMenuPopup);
+    
+    const lat = e.latlng.lat.toFixed(5);
+    const lng = e.latlng.lng.toFixed(5);
+    
+    const content = `
+        <div class="map-context-menu">
+            <button class="context-menu-btn" onclick="setJourneyPoint('origin', ${lat}, ${lng})">📍 Usar como Origen</button>
+            <button class="context-menu-btn" onclick="setJourneyPoint('dest', ${lat}, ${lng})">🏁 Usar como Destino</button>
+        </div>
+    `;
+    
+    contextMenuPopup = L.popup()
+        .setLatLng(e.latlng)
+        .setContent(content)
+        .openOn(map);
+});
+
+window.setJourneyPoint = function(type, lat, lng) {
+    if (contextMenuPopup) map.closePopup(contextMenuPopup);
+    
+    const input = type === 'origin' ? document.getElementById('journey-origin') : document.getElementById('journey-dest');
+    const val = `[${lat}, ${lng}]`;
+    input.value = val;
+    input.dataset.query = val;
+    input.dataset.lat = lat;
+    input.dataset.lng = lng;
+    
+    document.getElementById('journey-panel').classList.remove('hidden');
+};
+
+journeySearchBtn.addEventListener('click', async () => {
+    const origQuery = journeyOriginInput.value.trim();
+    const destQuery = journeyDestInput.value.trim();
+    
+    if (!destQuery) {
+        alert("Introduce un destino válido.");
+        return;
+    }
+    
+    journeyResultsDiv.innerHTML = '<div class="loading-pulse">Calculando rutas...</div>';
+    
+    let origCoords = null;
+    if (journeyOriginInput.dataset.lat && journeyOriginInput.dataset.lng && journeyOriginInput.dataset.query === origQuery) {
+        origCoords = { lat: parseFloat(journeyOriginInput.dataset.lat), lng: parseFloat(journeyOriginInput.dataset.lng) };
+    } else if (!origQuery) {
+        origCoords = { lat: map.getCenter().lat, lng: map.getCenter().lng };
+    } else {
+        origCoords = await geocodeNominatim(origQuery);
+    }
+    
+    let destCoords = null;
+    if (journeyDestInput.dataset.lat && journeyDestInput.dataset.lng && journeyDestInput.dataset.query === destQuery) {
+        destCoords = { lat: parseFloat(journeyDestInput.dataset.lat), lng: parseFloat(journeyDestInput.dataset.lng) };
+    } else {
+        destCoords = await geocodeNominatim(destQuery);
+    }
+    
+    if (!origCoords || !destCoords) {
+        journeyResultsDiv.innerHTML = '<div class="error-msg">No fue posible encontrar las localizaciones.</div>';
+        return;
+    }
+    
+    try {
+        const res = await fetch(`/api/journey?orig_lat=${origCoords.lat}&orig_lng=${origCoords.lng}&dest_lat=${destCoords.lat}&dest_lng=${destCoords.lng}`);
+        const data = await res.json();
+        
+        if (!data.success || !data.routes || data.routes.length === 0) {
+            journeyResultsDiv.innerHTML = '<div class="error-msg">Ninguna ruta directa encontrada en un radio de 600m.</div>';
+            return;
+        }
+        
+        renderJourneyResults(data.routes);
+        
+        map.fitBounds([
+            [origCoords.lat, origCoords.lng],
+            [destCoords.lat, destCoords.lng]
+        ], { padding: [50, 50] });
+        
+    } catch (e) {
+        journeyResultsDiv.innerHTML = '<div class="error-msg">Error al contactar con el servidor.</div>';
+    }
+});
+
+function renderJourneyResults(routes) {
+    journeyResultsDiv.innerHTML = '';
+    
+    routes.forEach((route, idx) => {
+        const isBus = route.type === 'bus';
+        const isMetrobus = route.type === 'metrobus';
+        const badgeColor = isBus ? '#ef4444' : (isMetrobus ? '#FFB81C' : '#3b82f6');
+        
+        const card = document.createElement('div');
+        card.className = 'route-card';
+        card.innerHTML = `
+            <div class="route-card-header">
+                <div class="route-badge" style="background-color: ${badgeColor}">${route.line}</div>
+                <div class="route-time">${Math.round(route.t_total)} min</div>
+            </div>
+            <div class="route-details">
+                <div class="route-leg">
+                    <span>🚶</span> <span>Caminar ${Math.round(route.orig_stop.walk)} min hasta <b>${route.orig_stop.name}</b></span>
+                </div>
+                <div class="route-leg">
+                    <span>🚌</span> <span>Esperar ${Math.round(route.t_wait)} min</span>
+                </div>
+                <div class="route-leg">
+                    <span style="color:${badgeColor}">●</span> <span>Viaje de ${Math.round(route.t_transit)} min hasta <b>${route.dest_stop.name}</b></span>
+                </div>
+                <div class="route-leg">
+                    <span>🚶</span> <span>Caminar ${Math.round(route.dest_stop.walk)} min hasta el destino</span>
+                </div>
+            </div>
+            ${route.is_realtime 
+                ? `<div class="realtime-indicator"><span class="pulse" style="width:6px;height:6px;margin:0;"></span> Precisión en Tiempo Real</div>` 
+                : `<div class="realtime-indicator" style="color:var(--text-secondary)">Estimación basada en horario</div>`
+            }
+        `;
+        
+        card.addEventListener('click', () => {
+            drawRoute(route.line, route.type, route.orig_stop.id, route.destination);
+            if(window.innerWidth < 768) {
+                journeyPanel.classList.add('hidden');
+            }
+        });
+        
+        journeyResultsDiv.appendChild(card);
+    });
+}
