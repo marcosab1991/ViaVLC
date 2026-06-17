@@ -170,14 +170,6 @@ async def get_line_geometry(line: str, type: str = "bus", destination: str = "")
                     highest_ratio = -1
                     target_dest = remove_accents(destination.lower())
                     
-                    aliases = {
-                        "est.del nord": "xativa",
-                        "estacio del nord": "xativa",
-                        "est. del nord": "xativa"
-                    }
-                    if target_dest in aliases:
-                        target_dest = aliases[target_dest]
-                    
                     for row_dest, geom_json in rows:
                         db_dest = remove_accents((row_dest or "").lower())
                         ratio = difflib.SequenceMatcher(None, db_dest, target_dest).ratio()
