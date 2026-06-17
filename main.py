@@ -303,14 +303,28 @@ async def fetch_tram_eta(stop_id: str):
 
 def fetch_bus_eta_sync(stop_id: str):
     arrivals = []
-    live_data = emtvlcapi.get_bus_times(int(stop_id))
-    if live_data:
-        for item in live_data:
+    try:
+        url = f"https://geoportal.emtvalencia.es/EMT/mapfunctions/MapUtilsPetitions.php?sec=getSAE&parada={stop_id}"
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        # Use a short timeout because if geoportal is down we shouldn't hang
+        import xml.etree.ElementTree as ET
+        resp = urllib.request.urlopen(req, timeout=3)
+        xml_data = resp.read().decode('utf-8', errors='ignore')
+        
+        root = ET.fromstring(xml_data)
+        for vehiculo in root.findall('.//vehiculo'):
+            line = vehiculo.get('linea', '')
+            mins = vehiculo.get('minutos', '?')
+            dest = vehiculo.get('destino', '')
+            
             arrivals.append({
-                "line": str(item.get("linea", "")),
-                "eta": f"{item.get('minutos', '?')} min",
-                "destination": item.get("destino", "")
+                "line": str(line),
+                "eta": "Próximo" if mins == "0" else f"{mins} min",
+                "destination": str(dest)
             })
+    except Exception as e:
+        print(f"Error fetching Geoportal bus ETA for {stop_id}: {e}")
+        
     return arrivals
 
 async def fetch_metrobus_eta(stop_id: str):
