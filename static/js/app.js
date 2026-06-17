@@ -857,8 +857,8 @@ openJourneyBtn.addEventListener('click', () => {
     if (!journeyOriginInput.value && typeof userCurrentLatLng !== 'undefined' && userCurrentLatLng) {
         journeyOriginInput.value = "Mi ubicación";
         journeyOriginInput.dataset.query = "Mi ubicación";
-        journeyOriginInput.dataset.lat = userCurrentLatLng.lat;
-        journeyOriginInput.dataset.lng = userCurrentLatLng.lng;
+        journeyOriginInput.dataset.lat = userCurrentLatLng[0];
+        journeyOriginInput.dataset.lng = userCurrentLatLng[1];
     }
 });
 
@@ -1043,6 +1043,9 @@ function renderJourneyResults(routes) {
         
         const card = document.createElement('div');
         card.className = 'route-card';
+        if (!route.is_realtime) {
+            card.style.display = 'none'; // Esconder até o frontend confirmar que o autocarro/metro existe mesmo!
+        }
         
         function updateCardHTML() {
             card.innerHTML = `
@@ -1092,6 +1095,7 @@ function renderJourneyResults(routes) {
                             route.t_total = route.orig_stop.walk + route.t_wait + route.t_transit + route.dest_stop.walk;
                             route.is_realtime = true;
                             updateCardHTML();
+                            card.style.display = 'block'; // Mostrar o cartão porque já confirmamos a viatura!
                         }
                     } else {
                         // The API successfully returned but there are NO vehicles matching! It's closed!
