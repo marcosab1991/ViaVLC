@@ -1067,9 +1067,14 @@ function renderJourneyResults(routes) {
         
         updateCardHTML();
         
-        if (!route.is_realtime && isBus) {
-            fetchDirectBusEta(route.orig_stop.id).then(liveData => {
-                if (liveData.success) {
+        if (!route.is_realtime) {
+            const fetchPromise = isBus 
+                ? fetchDirectBusEta(route.orig_stop.id)
+                : fetch(`/api/eta?id=${route.orig_stop.id}&type=${route.type}`).then(r => r.json());
+                
+            fetchPromise.then(liveData => {
+                if (liveData.success && liveData.data) {
+                    // For Metro, match by destination. If no exact match, fallback to line match
                     const match = liveData.data.find(arr => arr.line == route.line && arr.destination == route.destination);
                     const fallbackMatch = !match ? liveData.data.find(arr => arr.line == route.line) : null;
                     const bestMatch = match || fallbackMatch;
