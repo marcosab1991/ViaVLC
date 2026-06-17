@@ -1037,30 +1037,55 @@ function renderJourneyResults(routes) {
         
         const card = document.createElement('div');
         card.className = 'route-card';
-        card.innerHTML = `
-            <div class="route-card-header">
-                <div class="route-badge" style="background-color: ${badgeColor}">${route.line}</div>
-                <div class="route-time">${Math.round(route.t_total)} min</div>
-            </div>
-            <div class="route-details">
-                <div class="route-leg">
-                    <span>🚶</span> <span>Caminar ${Math.round(route.orig_stop.walk)} min hasta <b>${route.orig_stop.name}</b></span>
+        
+        function updateCardHTML() {
+            card.innerHTML = `
+                <div class="route-card-header">
+                    <div class="route-badge" style="background-color: ${badgeColor}">${route.line}</div>
+                    <div class="route-time">${Math.round(route.t_total)} min</div>
                 </div>
-                <div class="route-leg">
-                    <span>🚌</span> <span>Esperar ${Math.round(route.t_wait)} min</span>
+                <div class="route-details">
+                    <div class="route-leg">
+                        <span>🚶</span> <span>Caminar ${Math.round(route.orig_stop.walk)} min hasta <b>${route.orig_stop.name}</b></span>
+                    </div>
+                    <div class="route-leg">
+                        <span>🚌</span> <span>Esperar ${Math.round(route.t_wait)} min</span>
+                    </div>
+                    <div class="route-leg">
+                        <span style="color:${badgeColor}">●</span> <span>Viaje de ${Math.round(route.t_transit)} min hasta <b>${route.dest_stop.name}</b></span>
+                    </div>
+                    <div class="route-leg">
+                        <span>🚶</span> <span>Caminar ${Math.round(route.dest_stop.walk)} min hasta el destino</span>
+                    </div>
                 </div>
-                <div class="route-leg">
-                    <span style="color:${badgeColor}">●</span> <span>Viaje de ${Math.round(route.t_transit)} min hasta <b>${route.dest_stop.name}</b></span>
-                </div>
-                <div class="route-leg">
-                    <span>🚶</span> <span>Caminar ${Math.round(route.dest_stop.walk)} min hasta el destino</span>
-                </div>
-            </div>
-            ${route.is_realtime 
-                ? `<div class="realtime-indicator"><span class="pulse" style="width:6px;height:6px;margin:0;"></span> Precisión en Tiempo Real</div>` 
-                : `<div class="realtime-indicator" style="color:var(--text-secondary)">Estimación basada en horario</div>`
-            }
-        `;
+                ${route.is_realtime 
+                    ? \`<div class="realtime-indicator"><span class="pulse" style="width:6px;height:6px;margin:0;"></span> Precisión en Tiempo Real</div>\` 
+                    : \`<div class="realtime-indicator" style="color:var(--text-secondary)">Estimación basada en horario</div>\`
+                }
+            `;
+        }
+        
+        updateCardHTML();
+        
+        if (!route.is_realtime && isBus) {
+            fetchDirectBusEta(route.orig_stop.id).then(liveData => {
+                if (liveData.success) {
+                    const match = liveData.data.find(arr => arr.line == route.line && arr.destination == route.destination);
+                    const fallbackMatch = !match ? liveData.data.find(arr => arr.line == route.line) : null;
+                    const bestMatch = match || fallbackMatch;
+                    
+                    if (bestMatch) {
+                        const mins = bestMatch.eta === 'Próximo' ? 0 : parseInt(bestMatch.eta);
+                        if (!isNaN(mins) && mins < 60) {
+                            route.t_wait = mins;
+                            route.t_total = route.orig_stop.walk + route.t_wait + route.t_transit + route.dest_stop.walk;
+                            route.is_realtime = true;
+                            updateCardHTML();
+                        }
+                    }
+                }
+            }).catch(() => {});
+        }
         
         card.addEventListener('click', () => {
             drawRoute(route.line, route.type, route.orig_stop.id, route.destination);
