@@ -1059,8 +1059,8 @@ function renderJourneyResults(routes) {
                     </div>
                 </div>
                 ${route.is_realtime 
-                    ? \`<div class="realtime-indicator"><span class="pulse" style="width:6px;height:6px;margin:0;"></span> Precisión en Tiempo Real</div>\` 
-                    : \`<div class="realtime-indicator" style="color:var(--text-secondary)">Estimación basada en horario</div>\`
+                    ? '<div class="realtime-indicator"><span class="pulse" style="width:6px;height:6px;margin:0;"></span> Precisión en Tiempo Real</div>' 
+                    : '<div class="realtime-indicator" style="color:var(--text-secondary)">Estimación basada en horario</div>'
                 }
             `;
         }
