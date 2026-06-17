@@ -659,7 +659,7 @@ async function loadClusterData(marker, activeMembers) {
         }
         
         return `
-        <div class="arrival-item">
+        <div class="arrival-item" onclick="drawRoute('${arrival.line}', '${arrival._parentType}', null, '${(arrival.destination || '').replace(/'/g, "\\'")}')" style="cursor: pointer;" title="Ver Ruta">
             <div class="arrival-left">
                 <span class="line-badge ${lineClass}" style="${badgeStyle}">${arrival.line}</span>
                 ${arrival.destination ? `<span class="arrival-dest">${arrival.destination}</span>` : ''}
