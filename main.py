@@ -303,38 +303,35 @@ async def fetch_tram_eta(stop_id: str):
 
 def fetch_bus_eta_sync(stop_id: str):
     arrivals = []
-    try:
-        url = f"https://geoportal.emtvalencia.es/EMT/mapfunctions/MapUtilsPetitions.php?sec=getSAE&parada={stop_id}"
-        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-        # Use a short timeout because if geoportal is down we shouldn't hang
-        import xml.etree.ElementTree as ET
-        resp = urllib.request.urlopen(req, timeout=3)
-        xml_data = resp.read().decode('utf-8', errors='ignore')
+    url = f"https://geoportal.emtvalencia.es/EMT/mapfunctions/MapUtilsPetitions.php?sec=getSAE&parada={stop_id}"
+    req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+    # Use a short timeout because if geoportal is down we shouldn't hang
+    import xml.etree.ElementTree as ET
+    resp = urllib.request.urlopen(req, timeout=3)
+    xml_data = resp.read().decode('utf-8', errors='ignore')
+    
+    root = ET.fromstring(xml_data)
+    for bus in root.findall('.//bus'):
+        line_el = bus.find('linea')
+        mins_el = bus.find('minutos')
+        dest_el = bus.find('destino')
         
-        root = ET.fromstring(xml_data)
-        for bus in root.findall('.//bus'):
-            line_el = bus.find('linea')
-            mins_el = bus.find('minutos')
-            dest_el = bus.find('destino')
-            
-            line = line_el.text if line_el is not None else ''
-            mins = mins_el.text if mins_el is not None else '?'
-            dest = dest_el.text if dest_el is not None else ''
-            
-            # Clean up destination (it might have CDATA tags although ET usually strips them)
-            dest = str(dest).replace('<![CDATA[', '').replace(']]>', '')
-            
-            # Clean up minutes (e.g. "30 min.", "01:24:45", "Próximo")
-            if "min" in mins:
-                mins = mins.replace("min.", "").replace("min", "").strip()
-            
-            arrivals.append({
-                "line": str(line),
-                "eta": "Próximo" if mins == "0" else f"{mins} min" if mins.isdigit() else mins,
-                "destination": str(dest)
-            })
-    except Exception as e:
-        print(f"Error fetching Geoportal bus ETA for {stop_id}: {e}")
+        line = line_el.text if line_el is not None else ''
+        mins = mins_el.text if mins_el is not None else '?'
+        dest = dest_el.text if dest_el is not None else ''
+        
+        # Clean up destination (it might have CDATA tags although ET usually strips them)
+        dest = str(dest).replace('<![CDATA[', '').replace(']]>', '')
+        
+        # Clean up minutes (e.g. "30 min.", "01:24:45", "Próximo")
+        if "min" in mins:
+            mins = mins.replace("min.", "").replace("min", "").strip()
+        
+        arrivals.append({
+            "line": str(line),
+            "eta": "Próximo" if mins == "0" else f"{mins} min" if mins.isdigit() else mins,
+            "destination": str(dest)
+        })
         
     return arrivals
 
@@ -463,8 +460,8 @@ async def get_eta(id: str, type: str):
         
     except Exception as e:
         print(f"Error fetching ETA for {type} {id}: {e}")
-        # Fallback empty list so frontend shows "No data"
-        return {"success": True, "data": []}
+        # Return timeout True so get_journey applies fallback instead of dropping the route
+        return {"success": False, "data": [], "timeout": True}
 
 def calculate_haversine(lat1, lon1, lat2, lon2):
     R = 6371000

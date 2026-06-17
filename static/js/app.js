@@ -856,6 +856,7 @@ openJourneyBtn.addEventListener('click', () => {
     journeyPanel.classList.remove('hidden');
     if (!journeyOriginInput.value && typeof userCurrentLatLng !== 'undefined' && userCurrentLatLng) {
         journeyOriginInput.value = "Mi ubicación";
+        journeyOriginInput.dataset.query = "Mi ubicación";
         journeyOriginInput.dataset.lat = userCurrentLatLng.lat;
         journeyOriginInput.dataset.lng = userCurrentLatLng.lng;
     }
