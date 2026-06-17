@@ -312,14 +312,25 @@ def fetch_bus_eta_sync(stop_id: str):
         xml_data = resp.read().decode('utf-8', errors='ignore')
         
         root = ET.fromstring(xml_data)
-        for vehiculo in root.findall('.//vehiculo'):
-            line = vehiculo.get('linea', '')
-            mins = vehiculo.get('minutos', '?')
-            dest = vehiculo.get('destino', '')
+        for bus in root.findall('.//bus'):
+            line_el = bus.find('linea')
+            mins_el = bus.find('minutos')
+            dest_el = bus.find('destino')
+            
+            line = line_el.text if line_el is not None else ''
+            mins = mins_el.text if mins_el is not None else '?'
+            dest = dest_el.text if dest_el is not None else ''
+            
+            # Clean up destination (it might have CDATA tags although ET usually strips them)
+            dest = str(dest).replace('<![CDATA[', '').replace(']]>', '')
+            
+            # Clean up minutes (e.g. "30 min.", "01:24:45", "Próximo")
+            if "min" in mins:
+                mins = mins.replace("min.", "").replace("min", "").strip()
             
             arrivals.append({
                 "line": str(line),
-                "eta": "Próximo" if mins == "0" else f"{mins} min",
+                "eta": "Próximo" if mins == "0" else f"{mins} min" if mins.isdigit() else mins,
                 "destination": str(dest)
             })
     except Exception as e:
