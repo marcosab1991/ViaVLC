@@ -1087,7 +1087,12 @@ function renderJourneyResults(routes) {
                             route.is_realtime = true;
                             updateCardHTML();
                         }
+                    } else {
+                        // The API successfully returned but there are NO vehicles matching! It's closed!
+                        card.style.display = 'none';
                     }
+                } else {
+                    // API request failed (e.g. timeout on frontend). Keep showing the theoretical estimate.
                 }
             }).catch(() => {});
         }

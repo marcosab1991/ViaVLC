@@ -609,7 +609,7 @@ async def get_journey(orig_lat: float, orig_lng: float, dest_lat: float, dest_ln
                 return (sid, res)
             except Exception as e:
                 print(f"Timeout or error fetching ETA for {stype} {sid}: {e}")
-                return (sid, {"success": True, "data": []})
+                return (sid, {"success": False, "data": [], "timeout": True})
             
         fetch_tasks = [fetch_eta_cached(sid, stype) for sid, stype in stops_to_fetch]
         eta_results = await asyncio.gather(*fetch_tasks, return_exceptions=True)
@@ -660,10 +660,17 @@ async def get_journey(orig_lat: float, orig_lng: float, dest_lat: float, dest_ln
                                 is_realtime = not is_schedule_data # Only true if it's actual GPS real-time
                                 
             if best_t_wait is None:
-                # API Timeout or no live data: fallback to an estimated average wait time of 10 minutes
-                best_t_wait = 10
-                best_t_transit = r['t_baseline']
-                is_realtime = False
+                # API Timeout or no live data
+                if eta_orig_res.get('timeout'):
+                    # The server timed out (e.g. Metro is slow). Let the frontend backfill it dynamically!
+                    best_t_wait = 10
+                    best_t_transit = r['t_baseline']
+                    is_realtime = False
+                else:
+                    # The API successfully returned empty data (meaning NO buses/metros at this hour)
+                    # We should NOT invent a 10 minute estimate. Drop this route.
+                    continue
+
             r['t_wait'] = best_t_wait
             r['t_transit'] = best_t_transit
             r['t_total'] = r['orig_stop']['walk'] + best_t_wait + best_t_transit + r['dest_stop']['walk']
