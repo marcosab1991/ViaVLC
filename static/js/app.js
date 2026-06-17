@@ -1043,8 +1043,8 @@ function renderJourneyResults(routes) {
         
         const card = document.createElement('div');
         card.className = 'route-card';
-        if (!route.is_realtime) {
-            card.style.display = 'none'; // Esconder até o frontend confirmar que o autocarro/metro existe mesmo!
+        if (route.is_fallback) {
+            card.style.display = 'none'; // Esconder apenas as rotas de "fallback/timeout" até o frontend as confirmar
         }
         
         function updateCardHTML() {
@@ -1076,7 +1076,7 @@ function renderJourneyResults(routes) {
         
         updateCardHTML();
         
-        if (!route.is_realtime) {
+        if (route.is_fallback) {
             const fetchPromise = isBus 
                 ? fetchDirectBusEta(route.orig_stop.id)
                 : fetch(`/api/eta?id=${route.orig_stop.id}&type=${route.type}`).then(r => r.json());

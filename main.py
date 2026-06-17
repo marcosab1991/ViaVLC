@@ -656,6 +656,7 @@ async def get_journey(orig_lat: float, orig_lng: float, dest_lat: float, dest_ln
                                 best_t_transit = dt - t_wait
                                 is_realtime = not is_schedule_data # Only true if it's actual GPS real-time
                                 
+            is_fallback = False
             if best_t_wait is None:
                 # API Timeout or no live data
                 if eta_orig_res.get('timeout'):
@@ -663,6 +664,7 @@ async def get_journey(orig_lat: float, orig_lng: float, dest_lat: float, dest_ln
                     best_t_wait = 10
                     best_t_transit = r['t_baseline']
                     is_realtime = False
+                    is_fallback = True
                 else:
                     # The API successfully returned empty data (meaning NO buses/metros at this hour)
                     # We should NOT invent a 10 minute estimate. Drop this route.
@@ -672,6 +674,7 @@ async def get_journey(orig_lat: float, orig_lng: float, dest_lat: float, dest_ln
             r['t_transit'] = best_t_transit
             r['t_total'] = r['orig_stop']['walk'] + best_t_wait + best_t_transit + r['dest_stop']['walk']
             r['is_realtime'] = is_realtime
+            r['is_fallback'] = is_fallback
             
             # Penalize routes that couldn't correlate the destination ETA
             r['sort_score'] = r['t_total'] if is_realtime else r['t_total'] + 1000
