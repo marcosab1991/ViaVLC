@@ -1037,83 +1037,68 @@ function renderJourneyResults(routes) {
     journeyResultsDiv.innerHTML = '';
     
     routes.forEach((route, idx) => {
-        const isBus = route.type === 'bus';
-        const isMetrobus = route.type === 'metrobus';
-        const badgeColor = isBus ? '#ef4444' : (isMetrobus ? '#FFB81C' : '#3b82f6');
-        
         const card = document.createElement('div');
         card.className = 'route-card';
-        if (route.is_fallback) {
-            card.style.display = 'none'; // Esconder apenas as rotas de "fallback/timeout" até o frontend as confirmar
-        }
         
-        function updateCardHTML() {
-            card.innerHTML = `
-                <div class="route-card-header">
-                    <div class="route-badge" style="background-color: ${badgeColor}">${route.line}</div>
-                    <div class="route-time">${Math.round(route.t_total)} min</div>
-                </div>
-                <div class="route-details">
-                    <div class="route-leg">
-                        <span>🚶</span> <span>Caminar ${Math.round(route.orig_stop.walk)} min hasta <b>${route.orig_stop.name}</b></span>
-                    </div>
-                    <div class="route-leg">
-                        <span>🚌</span> <span>Esperar ${Math.round(route.t_wait)} min</span>
-                    </div>
-                    <div class="route-leg">
-                        <span style="color:${badgeColor}">●</span> <span>Viaje de ${Math.round(route.t_transit)} min hasta <b>${route.dest_stop.name}</b></span>
-                    </div>
-                    <div class="route-leg">
-                        <span>🚶</span> <span>Caminar ${Math.round(route.dest_stop.walk)} min hasta el destino</span>
-                    </div>
-                </div>
-                ${route.is_realtime 
-                    ? '<div class="realtime-indicator"><span class="pulse" style="width:6px;height:6px;margin:0;"></span> Precisión en Tiempo Real</div>' 
-                    : '<div class="realtime-indicator" style="color:var(--text-secondary)">Estimación basada en horario</div>'
-                }
-            `;
-        }
+        // Count total time
+        let totalMins = 0;
+        route.legs.forEach(leg => totalMins += leg.time || 0);
         
-        updateCardHTML();
+        let legsHtml = '';
+        let hasRealtime = false;
         
-        if (route.is_fallback) {
-            const fetchPromise = isBus 
-                ? fetchDirectBusEta(route.orig_stop.id)
-                : fetch(`/api/eta?id=${route.orig_stop.id}&type=${route.type}&_cb=${Date.now()}`).then(r => r.json());
+        route.legs.forEach(leg => {
+            if (leg.type === 'walk') {
+                legsHtml += `<div class="route-leg">
+                    <span>🚶</span> <span>Caminar ${leg.time} min hasta <b>${leg.dest_stop || 'destino'}</b></span>
+                </div>`;
+            } else {
+                const isBus = leg.type === 'bus';
+                const isMetrobus = leg.type === 'metrobus';
+                const badgeColor = isBus ? '#ef4444' : (isMetrobus ? '#FFB81C' : '#3b82f6');
                 
-            fetchPromise.then(liveData => {
-                if (liveData.success && liveData.data) {
-                    // For Metro, match by destination. If no exact match, fallback to line match
-                    const match = liveData.data.find(arr => arr.line == route.line && arr.destination == route.destination);
-                    const fallbackMatch = !match ? liveData.data.find(arr => arr.line == route.line) : null;
-                    const bestMatch = match || fallbackMatch;
-                    
-                    if (bestMatch) {
-                        const mins = bestMatch.eta === 'Próximo' ? 0 : parseInt(bestMatch.eta);
-                        if (!isNaN(mins) && mins < 60) {
-                            route.t_wait = mins;
-                            route.t_total = route.orig_stop.walk + route.t_wait + route.t_transit + route.dest_stop.walk;
-                            route.is_realtime = true;
-                            updateCardHTML();
-                            card.style.display = 'block'; // Mostrar o cartão porque já confirmamos a viatura!
-                        }
-                    } else {
-                        // The API successfully returned but there are NO vehicles matching! It's closed!
-                        card.style.display = 'none';
-                    }
-                } else {
-                    // API request failed (e.g. timeout on frontend). Keep showing the theoretical estimate.
+                let etaInfo = '';
+                if (leg.live_eta !== undefined) {
+                    etaInfo = ` <span style="color:#22c55e;font-weight:600">(Llega a las ${leg.live_eta})</span>`;
+                    hasRealtime = true;
                 }
-            }).catch(() => {});
-        }
-        
-        card.addEventListener('click', () => {
-            drawRoute(route.line, route.type, route.orig_stop.id, route.destination);
-            if(window.innerWidth < 768) {
-                journeyPanel.classList.add('hidden');
+                
+                legsHtml += `<div class="route-leg">
+                    <span style="color:${badgeColor}">●</span> <span>Viajar en <span class="route-badge" style="background-color: ${badgeColor}; display:inline-block; margin: 0 4px">${leg.line}</span> durante ${leg.time} min hasta <b>${leg.dest_stop}</b>${etaInfo}</span>
+                </div>`;
             }
         });
+        
+        card.innerHTML = `
+            <div class="route-card-header">
+                <div class="route-badge" style="background-color: #333">Ruta Optimizada</div>
+                <div class="route-time">${totalMins} min</div>
+            </div>
+            <div class="route-details">
+                ${legsHtml}
+            </div>
+            ${hasRealtime 
+                ? '<div class="realtime-indicator"><span class="pulse" style="width:6px;height:6px;margin:0;"></span> Precisión en Tiempo Real</div>' 
+                : '<div class="realtime-indicator" style="color:var(--text-secondary)">Estimación basada en horario</div>'
+            }
+        `;
+        
+        card.onclick = async () => {
+            if (currentRouteLine) { map.removeLayer(currentRouteLine); }
+            // For now we just draw the first route id found, multi-leg drawing can be improved later
+            if (route.route_ids && route.route_ids.length > 0) {
+                const lineRes = await fetch(`/api/line_geometry?route_id=${route.route_ids[0]}`);
+                const lineData = await lineRes.json();
+                if (lineData.success && lineData.geometry) {
+                    const geojson = JSON.parse(lineData.geometry);
+                    currentRouteLine = L.geoJSON(geojson, {
+                        style: { color: '#333', weight: 4, opacity: 0.8 }
+                    }).addTo(map);
+                }
+            }
+        };
         
         journeyResultsDiv.appendChild(card);
     });
 }
+

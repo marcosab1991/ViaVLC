@@ -455,10 +455,12 @@ async def fetch_metrobus_eta(stop_id: str):
 from fastapi import Response
 
 @app.get("/api/eta")
-async def get_eta(id: str, type: str, response: Response):
-    response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
-    response.headers["Expires"] = "0"
-    response.headers["Pragma"] = "no-cache"
+async def get_eta(id: str, type: str, response: Response = None):
+    # Set cache headers for the client
+    if response:
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        response.headers["Expires"] = "0"
+        response.headers["Pragma"] = "no-cache"
     
     if not id or not type:
         raise HTTPException(status_code=400, detail="Missing parameters")
@@ -491,6 +493,9 @@ async def get_eta(id: str, type: str, response: Response):
         # Return timeout True so get_journey applies fallback instead of dropping the route
         return {"success": False, "data": [], "timeout": True}
 
+STOPS_CACHE = {}
+TRANSIT_GRAPH = {}
+
 def calculate_haversine(lat1, lon1, lat2, lon2):
     R = 6371000
     phi1, phi2 = math.radians(lat1), math.radians(lat2)
@@ -498,6 +503,53 @@ def calculate_haversine(lat1, lon1, lat2, lon2):
     dlambda = math.radians(lon2 - lon1)
     a = math.sin(dphi/2)**2 + math.cos(phi1)*math.cos(phi2)*math.sin(dlambda/2)**2
     return 2 * R * math.atan2(math.sqrt(a), math.sqrt(1-a))
+
+@app.on_event("startup")
+async def build_graph():
+    global STOPS_CACHE, TRANSIT_GRAPH
+    print("Building multi-modal transit graph...")
+    
+    SPEEDS = {'metro': 25000/60, 'tram': 20000/60, 'bus': 15000/60, 'metrobus': 15000/60}
+    WALK_SPEED = 66.66 # meters per minute
+    TRANSFER_PENALTY = 5 # minutes
+    
+    try:
+        async with aiosqlite.connect('stops.db') as db:
+            cursor = await db.execute("SELECT id, lat, lng, type, name FROM stops")
+            rows = await cursor.fetchall()
+            STOPS_CACHE = {r[0]: {'lat': r[1], 'lng': r[2], 'type': r[3], 'name': r[4]} for r in rows}
+            
+        TRANSIT_GRAPH = {sid: [] for sid in STOPS_CACHE.keys()}
+        
+        async with aiosqlite.connect('lines.db') as db:
+            cursor = await db.execute("SELECT route_id, ref, stops_json FROM route_stops JOIN routes ON routes.id = route_stops.route_id")
+            for rid, ref, stops_json in await cursor.fetchall():
+                seq = json.loads(stops_json)
+                for i in range(len(seq) - 1):
+                    s1, s2 = seq[i], seq[i+1]
+                    sid1, sid2 = s1['id'], s2['id']
+                    if sid1 not in STOPS_CACHE or sid2 not in STOPS_CACHE: continue
+                    
+                    dist = s2['dist_along'] - s1['dist_along']
+                    if dist <= 0: dist = 100
+                    
+                    stype = STOPS_CACHE[sid1]['type']
+                    weight = dist / SPEEDS.get(stype, 15000/60) + 0.5 # 30s stop penalty
+                    
+                    TRANSIT_GRAPH[sid1].append((sid2, weight, 'transit', ref, stype, rid))
+                    
+        sids = list(STOPS_CACHE.keys())
+        for i in range(len(sids)):
+            for j in range(i+1, len(sids)):
+                sid1, sid2 = sids[i], sids[j]
+                d = calculate_haversine(STOPS_CACHE[sid1]['lat'], STOPS_CACHE[sid1]['lng'], STOPS_CACHE[sid2]['lat'], STOPS_CACHE[sid2]['lng'])
+                if d <= 300: # 300m transfer distance
+                    weight = (d / WALK_SPEED) + TRANSFER_PENALTY
+                    TRANSIT_GRAPH[sid1].append((sid2, weight, 'transfer', 'walk', 'walk', None))
+                    TRANSIT_GRAPH[sid2].append((sid1, weight, 'transfer', 'walk', 'walk', None))
+        print("Graph built successfully.")
+    except Exception as e:
+        print(f"Error building graph: {e}")
 
 def parse_time_str(time_str):
     if not time_str: return float('inf')
@@ -529,226 +581,138 @@ async def fetch_osrm_walk(lat1, lon1, lat2, lon2):
 
 @app.get("/api/journey")
 async def get_journey(orig_lat: float, orig_lng: float, dest_lat: float, dest_lng: float):
-    MAX_WALK = 600
-    WALK_SPEED = 4.0 * 1000 / 60 # 66.66 meters per minute (reduced from 5km/h to 4km/h)
-    SPEEDS = {'metro': 25000/60, 'tram': 20000/60, 'bus': 15000/60, 'metrobus': 15000/60} # meters per minute
+    if not STOPS_CACHE or not TRANSIT_GRAPH:
+        return {"success": False, "error": "Graph not initialized"}
+        
+    import heapq
+    WALK_SPEED = 66.66 # meters per min
     
-    try:
-        async with aiosqlite.connect('stops.db') as db:
-            cursor = await db.execute("SELECT id, type, name, lat, lng FROM stops")
-            all_stops = await cursor.fetchall()
+    pq = [] # (weight, node, path)
+    
+    # 1. Connect ORIG to all stops within 600m
+    for sid, sdata in STOPS_CACHE.items():
+        d = calculate_haversine(orig_lat, orig_lng, sdata['lat'], sdata['lng']) * 1.4
+        if d <= 600 * 1.4:
+            w = d / WALK_SPEED
+            heapq.heappush(pq, (w, sid, [(sid, w, 'walk', 'walk', 'walk', None)]))
             
-        orig_stops = {}
-        dest_stops = {}
-        for row in all_stops:
-            sid, stype, sname, slat, slng = row
-            # Calculate physical straight-line distance, but apply 1.4 detour factor to simulate street grid
-            d_orig = calculate_haversine(orig_lat, orig_lng, slat, slng) * 1.4
-            d_dest = calculate_haversine(dest_lat, dest_lng, slat, slng) * 1.4
-            if d_orig <= MAX_WALK * 1.4: # Allow physical 600m radius even with detour factor
-                orig_stops[sid] = {'dist': d_orig, 'name': sname, 'type': stype, 'lat': slat, 'lng': slng}
-            if d_dest <= MAX_WALK * 1.4:
-                dest_stops[sid] = {'dist': d_dest, 'name': sname, 'type': stype, 'lat': slat, 'lng': slng}
-                
-        if not orig_stops or not dest_stops:
-            return {"success": True, "routes": []}
+    dest_stops = {}
+    for sid, sdata in STOPS_CACHE.items():
+        d = calculate_haversine(dest_lat, dest_lng, sdata['lat'], sdata['lng']) * 1.4
+        if d <= 600 * 1.4:
+            dest_stops[sid] = d / WALK_SPEED
             
-        routes_found = []
+    visited = {}
+    best_path = None
+    best_weight = float('inf')
+    
+    while pq:
+        curr_w, u, path = heapq.heappop(pq)
         
-        async with aiosqlite.connect('lines.db') as db:
-            cursor = await db.execute("SELECT route_id, stops_json FROM route_stops")
-            for rid, stops_json in await cursor.fetchall():
-                seq = json.loads(stops_json)
-                
-                # Find all orig and dest stops in this sequence
-                seq_origs = [s for s in seq if s['id'] in orig_stops]
-                seq_dests = [s for s in seq if s['id'] in dest_stops]
-                
-                if not seq_origs or not seq_dests:
-                    continue
-                    
-                # Find best pair (origin MUST be before destination)
-                best_pair = None
-                best_total_dist = float('inf')
-                
-                for so in seq_origs:
-                    for sd in seq_dests:
-                        if so['dist_along'] < sd['dist_along']:
-                            # Valid direction!
-                            # Distance in transit
-                            transit_dist = sd['dist_along'] - so['dist_along']
-                            
-                            t_type = orig_stops[so['id']]['type']
-                            t_baseline = transit_dist / SPEEDS.get(t_type, 15000/60)
-                            walk1 = orig_stops[so['id']]['dist'] / WALK_SPEED
-                            walk2 = dest_stops[sd['id']]['dist'] / WALK_SPEED
-                            
-                            # Weight the total theoretical time (not raw meters!) to find the best pair
-                            theoretical_time = t_baseline + walk1 + walk2
-                            if theoretical_time < best_total_dist:
-                                best_total_dist = theoretical_time
-                                best_pair = (so, sd, transit_dist, t_baseline, walk1, walk2)
-                                
-                if best_pair:
-                    so, sd, transit_dist, t_baseline, walk1, walk2 = best_pair
-                    
-                    os_info = orig_stops[so['id']]
-                    ds_info = dest_stops[sd['id']]
-                    t_type = os_info['type']
-                    
-                    # Fetch ETAs!
-                    # For ETA we need to extract line ref to match
-                    cursor_routes = await db.execute("SELECT ref, name, destination FROM routes WHERE id=?", (rid,))
-                    route_info = await cursor_routes.fetchone()
-                    if not route_info: continue
-                    r_ref, r_name, r_dest = route_info
-                    
-                    routes_found.append({
-                        'route_id': rid,
-                        'line': r_ref,
-                        'name': r_name,
-                        'destination': r_dest,
-                        'type': t_type,
-                        'orig_stop': {'id': so['id'], 'name': os_info['name'], 'walk': walk1, 'lat': os_info['lat'], 'lng': os_info['lng']},
-                        'dest_stop': {'id': sd['id'], 'name': ds_info['name'], 'walk': walk2, 'lat': ds_info['lat'], 'lng': ds_info['lng']},
-                        'transit_dist': transit_dist,
-                        't_baseline': t_baseline
-                    })
-                    
-        # Now process ETAs
-        # 1. Sort routes by theoretical time (walk1 + baseline transit + walk2) and limit to top 5 to avoid massive API spam
-        routes_found.sort(key=lambda x: x['orig_stop']['walk'] + x['t_baseline'] + x['dest_stop']['walk'])
-        routes_found = routes_found[:5]
+        if curr_w >= best_weight: continue
+        if u in visited and visited[u] <= curr_w: continue
+        visited[u] = curr_w
         
-        # 2. Extract unique stops to fetch ETAs concurrently
-        stops_to_fetch = set()
-        for r in routes_found:
-            stops_to_fetch.add((r['orig_stop']['id'], r['type']))
-            stops_to_fetch.add((r['dest_stop']['id'], r['type']))
-            
-        import asyncio
-        async def fetch_eta_cached(sid, stype):
-            try:
-                # Hard timeout of 4 seconds to prevent the server from getting stuck forever!
-                res = await asyncio.wait_for(get_eta(sid, stype), timeout=4.0)
-                return (sid, res)
-            except Exception as e:
-                print(f"Timeout or error fetching ETA for {stype} {sid}: {e}")
-                return (sid, {"success": False, "data": [], "timeout": True})
-            
-        fetch_tasks = [fetch_eta_cached(sid, stype) for sid, stype in stops_to_fetch]
-        eta_results = await asyncio.gather(*fetch_tasks, return_exceptions=True)
-        
-        eta_cache = {}
-        for res in eta_results:
-            if not isinstance(res, Exception):
-                sid, data = res
-                eta_cache[sid] = data
+        if u in dest_stops:
+            final_w = curr_w + dest_stops[u]
+            if final_w < best_weight:
+                best_weight = final_w
+                best_path = path + [('DEST', dest_stops[u], 'walk', 'walk', 'walk', None)]
                 
-        valid_routes = []
-        for r in routes_found:
-            t_type = r['type']
-            l_ref = r['line']
+        for v, w_edge, edge_type, ref, ttype, rid in TRANSIT_GRAPH.get(u, []):
+            new_w = curr_w + w_edge
             
-            eta_orig_res = eta_cache.get(r['orig_stop']['id'], {})
-            eta_dest_res = eta_cache.get(r['dest_stop']['id'], {})
-            
-            o_etas = eta_orig_res.get('data', []) if eta_orig_res.get('success') else []
-            d_etas = eta_dest_res.get('data', []) if eta_dest_res.get('success') else []
-            
-            # Filter by line
-            o_etas = [e for e in o_etas if str(e.get('line')) == str(l_ref)]
-            d_etas = [e for e in d_etas if str(e.get('line')) == str(l_ref)]
-            
-            best_t_wait = None
-            best_t_transit = r['t_baseline']
-            is_realtime = False
-            
-            if o_etas:
-                # Pick the first vehicle arriving
-                t_wait = parse_time_str(o_etas[0].get('eta'))
-                is_schedule_data = not o_etas[0].get('realtime', True) # False if it's from schedule fallback
-                
-                if t_wait != float('inf'):
-                    best_t_wait = t_wait
+            if edge_type == 'transit' and path:
+                prev_edge_type = path[-1][2]
+                prev_ref = path[-1][3]
+                if prev_edge_type == 'transit' and prev_ref != ref:
+                    new_w += 5.0 # 5 min penalty for changing lines!
                     
-                    # Try to correlate at destination!
-                    expected_dest_eta = t_wait + r['t_baseline']
-                    best_diff = float('inf')
-                    for de in d_etas:
-                        dt = parse_time_str(de.get('eta'))
-                        if dt != float('inf') and dt >= t_wait:
-                            diff = abs(dt - expected_dest_eta)
-                            if diff < best_diff and diff < 20: # Must be within 20 mins of baseline
-                                best_diff = diff
-                                best_t_transit = dt - t_wait
-                                is_realtime = not is_schedule_data # Only true if it's actual GPS real-time
-                                
-            is_fallback = False
-            if best_t_wait is None:
-                # API Timeout or no live data
-                if eta_orig_res.get('timeout'):
-                    # The server timed out (e.g. Metro is slow). Let the frontend backfill it dynamically!
-                    best_t_wait = 10
-                    best_t_transit = r['t_baseline']
-                    is_realtime = False
-                    is_fallback = True
-                else:
-                    # The API successfully returned empty data (meaning NO buses/metros at this hour)
-                    # We should NOT invent a 10 minute estimate. Drop this route.
-                    continue
-
-            r['t_wait'] = best_t_wait
-            r['t_transit'] = best_t_transit
-            r['t_total'] = r['orig_stop']['walk'] + best_t_wait + best_t_transit + r['dest_stop']['walk']
-            r['is_realtime'] = is_realtime
-            r['is_fallback'] = is_fallback
-            
-            # Penalize routes that couldn't correlate the destination ETA
-            r['sort_score'] = r['t_total'] if is_realtime else r['t_total'] + 1000
-            valid_routes.append(r)
-            
-        valid_routes.sort(key=lambda x: x['sort_score'])
-        
-        # Filter duplicates (same origin and destination stops) to prevent corridor clogging
-        unique_routes = []
-        seen = set()
-        for r in valid_routes:
-            k = f"{r['orig_stop']['id']}-{r['dest_stop']['id']}"
-            if k not in seen:
-                seen.add(k)
-                unique_routes.append(r)
+            if new_w < best_weight:
+                heapq.heappush(pq, (new_w, v, path + [(v, w_edge, edge_type, ref, ttype, rid)]))
                 
-        # Phase 5: Fetch real OSRM walk times for the top 10 candidate routes
-        top_candidates = unique_routes[:10]
+    if not best_path:
+        return {"success": True, "routes": []}
         
-        async def enrich_route(r):
-            so_lat, so_lng = r['orig_stop']['lat'], r['orig_stop']['lng']
-            sd_lat, sd_lng = r['dest_stop']['lat'], r['dest_stop']['lng']
+    legs = []
+    first_stop = best_path[0][0]
+    legs.append({
+        'type': 'walk',
+        'time': round(best_path[0][1]),
+        'orig_lat': orig_lat, 'orig_lng': orig_lng,
+        'dest_stop': STOPS_CACHE[first_stop]['name']
+    })
+    
+    current_leg = None
+    route_ids_used = set()
+    
+    for i in range(1, len(best_path)):
+        node, w_edge, edge_type, ref, ttype, rid = best_path[i]
+        prev_node = best_path[i-1][0]
+        
+        if node == 'DEST':
+            if current_leg: legs.append(current_leg)
+            legs.append({
+                'type': 'walk',
+                'time': round(w_edge),
+                'orig_stop': STOPS_CACHE[prev_node]['name'],
+                'dest_lat': dest_lat, 'dest_lng': dest_lng
+            })
+            break
             
-            w1_time, w1_dist = await fetch_osrm_walk(orig_lat, orig_lng, so_lat, so_lng)
-            w2_time, w2_dist = await fetch_osrm_walk(sd_lat, sd_lng, dest_lat, dest_lng)
-            
-            r['orig_stop']['walk'] = w1_time
-            r['dest_stop']['walk'] = w2_time
-            
-            r['t_total'] = w1_time + r['t_wait'] + r['t_transit'] + w2_time
-            r['sort_score'] = r['t_total'] if r['is_realtime'] else r['t_total'] + 1000
-            return r
-            
-        if top_candidates:
-            final_routes = await asyncio.gather(*(enrich_route(r) for r in top_candidates))
-            final_routes.sort(key=lambda x: x['sort_score'])
+        if edge_type == 'walk' or edge_type == 'transfer':
+            if current_leg: 
+                legs.append(current_leg)
+                current_leg = None
+            legs.append({
+                'type': 'walk',
+                'time': round(w_edge),
+                'orig_stop': STOPS_CACHE[prev_node]['name'],
+                'dest_stop': STOPS_CACHE[node]['name']
+            })
         else:
-            final_routes = []
+            if rid: route_ids_used.add(rid)
+            if not current_leg or current_leg['line'] != ref:
+                if current_leg: legs.append(current_leg)
+                current_leg = {
+                    'type': ttype,
+                    'line': ref,
+                    'orig_id': prev_node,
+                    'orig_stop': STOPS_CACHE[prev_node]['name'],
+                    'dest_stop': STOPS_CACHE[node]['name'],
+                    'time': w_edge
+                }
+            else:
+                current_leg['dest_stop'] = STOPS_CACHE[node]['name']
+                current_leg['time'] += w_edge
                 
-        return {"success": True, "routes": final_routes} # Top unique routes updated with OSRM
-        
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        print(f"Journey API Error: {e}")
-        return {"success": False, "error": str(e)}
+    for leg in legs:
+        if 'time' in leg:
+            leg['time'] = round(leg['time'])
+            
+    # Fetch real-time ETA for the first transit leg
+    first_transit = next((l for l in legs if l['type'] not in ['walk']), None)
+    if first_transit:
+        try:
+            eta_res = await asyncio.wait_for(get_eta(first_transit['orig_id'], first_transit['type']), timeout=2.0)
+            if eta_res.get('success'):
+                etas = [e for e in eta_res['data'] if str(e.get('line')) == str(first_transit['line'])]
+                if etas:
+                    first_transit['live_eta'] = etas[0].get('eta')
+        except Exception as e:
+            print(f"Error fetching live ETA for journey: {e}")
+            
+    # Remove adjacent walk legs by squashing them
+    clean_legs = []
+    for leg in legs:
+        if leg['type'] == 'walk' and clean_legs and clean_legs[-1]['type'] == 'walk':
+            clean_legs[-1]['time'] += leg['time']
+            clean_legs[-1]['dest_stop'] = leg.get('dest_stop', 'destino')
+        else:
+            if leg['time'] > 0 or leg['type'] != 'walk': # ignore 0 min walks unless strictly necessary
+                clean_legs.append(leg)
+
+    return {"success": True, "routes": [{"legs": clean_legs, "route_ids": list(route_ids_used)}]}
 
 # Serve static files
 app.mount("/css", StaticFiles(directory="static/css"), name="css")
