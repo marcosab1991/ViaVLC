@@ -456,7 +456,7 @@ async function loadStopData(marker, stop, filterLine = null) {
         if (stop.type === 'bus') {
             data = await fetchDirectBusEta(stop.id);
         } else {
-            const response = await fetch(`/api/eta?id=${stop.id}&type=${stop.type}`);
+            const response = await fetch(`/api/eta?id=${stop.id}&type=${stop.type}&_cb=${Date.now()}`);
             data = await response.json();
         }
         if (data.success) {
@@ -563,7 +563,7 @@ async function loadClusterData(marker, activeMembers) {
                     hasError = true;
                 }
             } else {
-                const response = await fetch(`/api/eta?id=${stop.id}&type=${stop.type}`);
+                const response = await fetch(`/api/eta?id=${stop.id}&type=${stop.type}&_cb=${Date.now()}`);
                 data = await response.json();
                 if (data.success && data.data) {
                     data.data.forEach(arr => arr._parentType = stop.type);
@@ -1079,7 +1079,7 @@ function renderJourneyResults(routes) {
         if (route.is_fallback) {
             const fetchPromise = isBus 
                 ? fetchDirectBusEta(route.orig_stop.id)
-                : fetch(`/api/eta?id=${route.orig_stop.id}&type=${route.type}`).then(r => r.json());
+                : fetch(`/api/eta?id=${route.orig_stop.id}&type=${route.type}&_cb=${Date.now()}`).then(r => r.json());
                 
             fetchPromise.then(liveData => {
                 if (liveData.success && liveData.data) {

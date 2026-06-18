@@ -246,7 +246,8 @@ async def get_line_geometry(line: str, type: str = "bus", destination: str = "")
 async def fetch_metro_eta(stop_id: str):
     stop_id = stop_id.replace("metro-", "")
     url = 'https://www.metrovalencia.es/wp-admin/admin-ajax.php'
-    inner_data = f'action=info-estacion&id={stop_id}'
+    import time
+    inner_data = f'action=info-estacion&id={stop_id}&_cb={int(time.time()*1000)}'
     data = {'action': 'formularios_ajax', 'data': inner_data}
     
     async with aiohttp.ClientSession() as session:
@@ -275,7 +276,8 @@ async def fetch_metro_eta(stop_id: str):
 async def fetch_tram_eta(stop_id: str):
     stop_id = stop_id.replace("tram-", "")
     url = 'https://www.tramalacant.es/wp-admin/admin-ajax.php'
-    inner_data = f'action=info-estacion&id={stop_id}'
+    import time
+    inner_data = f'action=info-estacion&id={stop_id}&_cb={int(time.time()*1000)}'
     data = {'action': 'formularios_ajax', 'data': inner_data}
     
     async with aiohttp.ClientSession() as session:
@@ -430,8 +432,14 @@ async def fetch_metrobus_eta(stop_id: str):
         print(f"Error fetching Metrobus ETA for {stop_id}: {e}")
         return []
 
+from fastapi import Response
+
 @app.get("/api/eta")
-async def get_eta(id: str, type: str):
+async def get_eta(id: str, type: str, response: Response):
+    response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    response.headers["Expires"] = "0"
+    response.headers["Pragma"] = "no-cache"
+    
     if not id or not type:
         raise HTTPException(status_code=400, detail="Missing parameters")
         
