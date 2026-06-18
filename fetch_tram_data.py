@@ -1,21 +1,27 @@
 import urllib.request
 import urllib.parse
 import json
-import bs4
+import sqlite3
 import difflib
 
 def fetch_tram_data():
-    print("Scraping IDs from TRAM Alicante...")
-    url = 'https://www.tramalacant.es/ca/consulta-estacions/'
-    req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-    html = urllib.request.urlopen(req).read().decode('utf-8')
-    soup = bs4.BeautifulSoup(html, 'html.parser')
-    select = soup.find('select')
+    print("Extracting IDs from TRAM Alicante internal database (fgva.db)...")
     id_map = {}
-    for o in select.find_all('option'):
-        if o.get('value'):
-            id_map[o.text.strip()] = o.get('value')
-    print(f"Scraped {len(id_map)} IDs.")
+    try:
+        conn = sqlite3.connect('fgva.db')
+        c = conn.cursor()
+        # id is the mobile internal ID, nombre is the station name
+        c.execute("SELECT id, nombre FROM estaciones")
+        for row in c.fetchall():
+            mobile_id = row[0]
+            name = row[1].strip()
+            id_map[name] = str(mobile_id)
+        conn.close()
+    except Exception as e:
+        print(f"Error reading fgva.db: {e}")
+        return
+        
+    print(f"Extracted {len(id_map)} IDs from fgva.db.")
 
     print("Querying Overpass for TRAM stations and routes...")
     query = """

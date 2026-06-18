@@ -271,33 +271,32 @@ async def fetch_metro_eta(stop_id: str):
 
 async def fetch_tram_eta(stop_id: str):
     stop_id = stop_id.replace("tram-", "")
-    url = 'https://www.tramalacant.es/wp-admin/admin-ajax.php'
-    import time
-    inner_data = f'action=info-estacion&id={stop_id}&_cb={int(time.time()*1000)}'
-    data = {'action': 'formularios_ajax', 'data': inner_data}
+    url = f'https://www.fgv.es/fgv/app/es/api/v1/A/horarios-prevision-3/{stop_id}'
     
     async with aiohttp.ClientSession() as session:
-        async with session.post(url, data=data, headers={'User-Agent': 'Mozilla/5.0'}, timeout=10) as response:
-            text = await response.text()
+        async with session.get(url, headers={'User-Agent': 'TRAM/1.18.0 (Android)', 'Accept': 'application/json'}, timeout=10) as response:
             try:
-                res = json.loads(text)
-            except Exception:
-                res = {}
-            html = res.get('html', '')
-            
-            arrivals = []
-            blocks = html.split('item--proximos')[1:]
-            for block in blocks:
-                line_match = re.search(r'class=\"linea linea-(\w+)\"', block)
-                dest_match = re.search(r'<div class=\"nombre-estacion\">(.*?)</div>', block)
-                eta_match = re.search(r'<span class=\"minutos[^\"]*\">(.*?)</span>', block)
-                if line_match and dest_match and eta_match:
+                res = await response.json()
+                arrivals = []
+                for prev in res.get('previsiones', []):
+                    line = str(prev.get('linea', ''))
+                    dest = prev.get('destino', '')
+                    mins = prev.get('minutos', 0)
+                    
+                    if str(mins).isdigit():
+                        mins_str = "Próximo" if int(mins) == 0 else f"{mins} min"
+                    else:
+                        mins_str = str(mins)
+                        
                     arrivals.append({
-                        "line": f"L{line_match.group(1)}",
-                        "destination": dest_match.group(1).strip(),
-                        "eta": eta_match.group(1).strip()
+                        "line": f"L{line}" if not line.startswith('L') else line,
+                        "destination": dest,
+                        "eta": mins_str
                     })
-            return arrivals
+                return arrivals
+            except Exception as e:
+                print(f"Error fetching TRAM ETAs: {e}")
+                return []
 
 def get_emt_wsse_header():
     user_key = "7gH8m45w7A"
