@@ -158,10 +158,10 @@ async def get_line_geometry(line: str, type: str = "bus", destination: str = "")
             cursor = await db.execute('SELECT destination, geometry_json FROM routes WHERE ref=? AND type=?', (db_line_ref, type))
             rows = await cursor.fetchall()
             
-            # Fallback for Metrobus: strip trailing letter (e.g. 161A -> 161) if route not found
-            if not rows and type == "metrobus" and db_line_ref and db_line_ref[-1].isalpha():
+            # Fallback for Metrobus: API often returns base number (e.g. 145) but DB has variants (145A, 145B)
+            if not rows and type == "metrobus" and db_line_ref:
                 base_ref = "".join([c for c in db_line_ref if c.isdigit()])
-                cursor = await db.execute('SELECT destination, geometry_json FROM routes WHERE ref=? AND type=?', (base_ref, type))
+                cursor = await db.execute('SELECT destination, geometry_json FROM routes WHERE ref LIKE ? AND type=?', (f"{base_ref}%", type))
                 rows = await cursor.fetchall()
                 
             if rows:
@@ -210,12 +210,12 @@ async def get_line_geometry(line: str, type: str = "bus", destination: str = "")
             )
             rows = await cursor.fetchall()
             
-            # Fallback for Metrobus stops: strip trailing letter (e.g. 161A -> 161) if no stops found
-            if not rows and type == "metrobus" and line and line[-1].isalpha():
+            # Fallback for Metrobus stops: API often returns base number (e.g. 145) but DB has variants (145A)
+            if not rows and type == "metrobus" and line:
                 base_line = "".join([c for c in line if c.isdigit()])
                 cursor = await db.execute(
                     'SELECT id, name, lat, lng FROM stops WHERE type=? AND lines LIKE ? LIMIT 150',
-                    (type, f'%"{base_line}"%')
+                    (type, f'%"{base_line}%"%')
                 )
                 rows = await cursor.fetchall()
                 
@@ -245,32 +245,26 @@ async def get_line_geometry(line: str, type: str = "bus", destination: str = "")
 
 async def fetch_metro_eta(stop_id: str):
     stop_id = stop_id.replace("metro-", "")
-    url = 'https://www.metrovalencia.es/wp-admin/admin-ajax.php'
-    import time
-    inner_data = f'action=info-estacion&id={stop_id}&_cb={int(time.time()*1000)}'
-    data = {'action': 'formularios_ajax', 'data': inner_data}
+    url = f'https://www.fgv.es/fgv/app/api/v1/es/horarios-prevision-3/{stop_id}'
     
     async with aiohttp.ClientSession() as session:
-        async with session.post(url, data=data, headers={'User-Agent': 'Mozilla/5.0'}, timeout=10) as response:
+        async with session.get(url, headers={'User-Agent': 'okhttp/3.14.9', 'Accept': 'application/json'}, timeout=10) as response:
             text = await response.text()
             try:
                 res = json.loads(text)
             except Exception:
                 res = {}
-            html = res.get('html', '')
             
+            previsiones = res.get('previsiones', [])
             arrivals = []
-            blocks = html.split('item--proximos')[1:]
-            for block in blocks:
-                line_match = re.search(r'class=\"linea linea-(\w+)\"', block)
-                dest_match = re.search(r'<div class=\"nombre-estacion\">(.*?)</div>', block)
-                eta_match = re.search(r'<span class=\"minutos[^\"]*\">(.*?)</span>', block)
-                if line_match and dest_match and eta_match:
-                    arrivals.append({
-                        "line": f"L{line_match.group(1)}",
-                        "destination": dest_match.group(1).strip(),
-                        "eta": eta_match.group(1).strip()
-                    })
+            for p in previsiones:
+                minutos = p.get('minutos', 0)
+                eta_str = f"{minutos} min" if minutos > 0 else "0 min"
+                arrivals.append({
+                    "line": f"L{p.get('linea')}",
+                    "destination": p.get('destino'),
+                    "eta": eta_str
+                })
             return arrivals
 
 async def fetch_tram_eta(stop_id: str):
