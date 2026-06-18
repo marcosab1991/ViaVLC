@@ -10,8 +10,10 @@ import aiohttp
 import aiosqlite
 import emtvlcapi
 import unicodedata
+import hashlib
+import random
+import base64
 from fastapi import FastAPI, Query, HTTPException
-
 # Patch EMT API URL to use Geoportal (which doesn't block Cloud IPs like AWS/Hetzner)
 emtvlcapi.EMT_BUS_TIMES_URL = "https://geoportal.emtvalencia.es/EMT/mapfunctions/MapUtilsPetitions.php?sec=getSAE"
 from fastapi.staticfiles import StaticFiles
@@ -297,37 +299,62 @@ async def fetch_tram_eta(stop_id: str):
                     })
             return arrivals
 
+def get_emt_wsse_header():
+    user_key = "7gH8m45w7A"
+    password = "b0cb3f0957ab095e17fec2656528d46eb78d53a7cd21cc8a9e5608d125377732"
+    
+    rand_long = random.randint(-9223372036854775808, 9223372036854775807)
+    calculateMD5 = hashlib.md5(str(rand_long).encode('utf-8')).hexdigest()
+    l = str(int(time.time()))
+    sha1_input = calculateMD5 + l + password.lower()
+    encode = hashlib.sha1(sha1_input.encode('utf-8')).hexdigest()
+    
+    b64_encode = base64.b64encode(encode.encode('utf-8')).decode('utf-8')
+    b64_md5 = base64.b64encode(calculateMD5.encode('utf-8')).decode('utf-8')
+    
+    return 'UsernameToken Username="%s", PasswordDigest="%s", Nonce="%s", Created="%s"' % (user_key, b64_encode, b64_md5, l)
+
 def fetch_bus_eta_sync(stop_id: str):
     arrivals = []
-    url = f"https://geoportal.emtvalencia.es/EMT/mapfunctions/MapUtilsPetitions.php?sec=getSAE&parada={stop_id}"
-    req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-    # Use a short timeout because if geoportal is down we shouldn't hang
-    import xml.etree.ElementTree as ET
-    resp = urllib.request.urlopen(req, timeout=3)
-    xml_data = resp.read().decode('utf-8', errors='ignore')
+    url = f"https://servicios.emtvalencia.es/estimaciones/estimacion.php?idioma=es&parada={stop_id}&adaptados=false&getNBus=1"
     
-    root = ET.fromstring(xml_data)
-    for bus in root.findall('.//bus'):
-        line_el = bus.find('linea')
-        mins_el = bus.find('minutos')
-        dest_el = bus.find('destino')
+    headers = {
+        'User-Agent': 'EMT-Valencia/7.32 (Android 11)',
+        'x-wsse': get_emt_wsse_header()
+    }
+    
+    req = urllib.request.Request(url, headers=headers)
+    
+    import xml.etree.ElementTree as ET
+    try:
+        resp = urllib.request.urlopen(req, timeout=4)
+        xml_data = resp.read().decode('utf-8', errors='ignore')
+        root = ET.fromstring(xml_data)
         
-        line = line_el.text if line_el is not None else ''
-        mins = mins_el.text if mins_el is not None else '?'
-        dest = dest_el.text if dest_el is not None else ''
-        
-        # Clean up destination (it might have CDATA tags although ET usually strips them)
-        dest = str(dest).replace('<![CDATA[', '').replace(']]>', '')
-        
-        # Clean up minutes (e.g. "30 min.", "01:24:45", "Próximo")
-        if "min" in mins:
-            mins = mins.replace("min.", "").replace("min", "").strip()
-        
-        arrivals.append({
-            "line": str(line),
-            "eta": "Próximo" if mins == "0" else f"{mins} min" if mins.isdigit() else mins,
-            "destination": str(dest)
-        })
+        # XML structure looks like: <estimacion parada="383"><solo_parada><bus><linea>62</linea><destino>Benimàmet</destino><minutos>8 min.</minutos></bus>...
+        for bus in root.findall('.//bus'):
+            line_el = bus.find('linea')
+            mins_el = bus.find('minutos')
+            dest_el = bus.find('destino')
+            
+            line = line_el.text if line_el is not None else ''
+            mins = mins_el.text if mins_el is not None else '?'
+            dest = dest_el.text if dest_el is not None else ''
+            
+            # Clean up destination
+            dest = str(dest).replace('<![CDATA[', '').replace(']]>', '')
+            
+            # Clean up minutes (e.g. "30 min.", "Próximo")
+            if "min" in mins.lower():
+                mins = mins.lower().replace("min.", "").replace("min", "").strip()
+                
+            arrivals.append({
+                "line": str(line),
+                "eta": "Próximo" if mins == "0" else f"{mins} min" if mins.isdigit() else mins,
+                "destination": str(dest)
+            })
+    except Exception as e:
+        print(f"Error fetching EMT ETAs for stop {stop_id}: {e}")
         
     return arrivals
 
