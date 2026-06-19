@@ -807,7 +807,7 @@ async def get_journey(orig_lat: float, orig_lng: float, dest_lat: float, dest_ln
         
         async def check_leg(leg):
             try:
-                eta_res = await asyncio.wait_for(get_eta(leg['orig_id'], leg['type']), timeout=5.0)
+                eta_res = await asyncio.wait_for(get_eta(leg['orig_id'], leg['type']), timeout=8.0)
                 if eta_res.get('success'):
                     etas = [e for e in eta_res['data'] if str(e.get('line')) == str(leg['line'])]
                     if not etas:
@@ -820,9 +820,10 @@ async def get_journey(orig_lat: float, orig_lng: float, dest_lat: float, dest_ln
                         return leg
                         
                     return (leg, eta_val)
+                else:
+                    return leg # API explicitly failed, assume dead
             except Exception as e:
-                pass
-            return None
+                return leg # Timeout or other error, assume dead
             
         if transit_legs:
             results = await asyncio.gather(*(check_leg(l) for _, l in transit_legs))
