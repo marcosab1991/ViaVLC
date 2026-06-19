@@ -1,5 +1,10 @@
 venv/
+venv2/
 __pycache__/
 .env
 .pytest_cache/
 *.pyc
+*.log
+*.sqlite3
+*.db-journal
+.DS_Store

@@ -29,6 +29,13 @@ def remove_accents(input_str):
 
 app = FastAPI(title="ViaVLC API")
 
+try:
+    with open("metro_wp_mapping.json", "r") as f:
+        metro_wp_mapping = json.load(f)
+except FileNotFoundError:
+    metro_wp_mapping = {}
+    print("WARNING: metro_wp_mapping.json not found!")
+
 # Simple thread-safe TTL Cache
 class SimpleTTLCache:
     def __init__(self, ttl_seconds=30):
@@ -245,58 +252,157 @@ async def get_line_geometry(line: str, type: str = "bus", destination: str = "")
         traceback.print_exc()
         return {"success": False, "error": str(e)}
 
-async def fetch_metro_eta(stop_id: str):
-    stop_id = stop_id.replace("metro-", "")
-    url = f'https://www.fgv.es/fgv/app/api/v1/es/horarios-prevision-3/{stop_id}'
+async def fetch_fgv_eta(stop_id: str, city_code: str, prefix: str):
+    clean_id = stop_id.replace(prefix, "")
     
-    async with aiohttp.ClientSession() as session:
-        async with session.get(url, headers={'User-Agent': 'okhttp/3.14.9', 'Accept': 'application/json'}, timeout=10) as response:
-            text = await response.text()
+    lat = None
+    lng = None
+    
+    # Query stops.db for lat/lng of this stop
+    import aiosqlite
+    try:
+        async with aiosqlite.connect('stops.db') as db:
+            cursor = await db.execute("SELECT lat, lng FROM stops WHERE id = ?", (f"{prefix}{clean_id}",))
+            row = await cursor.fetchone()
+            if row:
+                lat, lng = row
+    except Exception as e:
+        print(f"Error querying lat/lng for {stop_id}: {e}")
+        
+    arrivals_set = set()
+    arrivals = []
+    
+    def add_previsiones(previsiones):
+        for p in previsiones:
+            line_name = f"L{p.get('line')}"
+            for t in p.get('trains', []):
+                seconds = t.get('seconds', 0)
+                minutos = seconds // 60
+                eta_str = "Próximo" if minutos == 0 else f"{minutos} min"
+                dest = t.get('destino')
+                
+                # Deduplicate based on line, destination, and roughly the same time
+                sig = f"{line_name}_{dest}_{minutos}"
+                if sig not in arrivals_set:
+                    arrivals_set.add(sig)
+                    arrivals.append({
+                        "line": line_name,
+                        "destination": dest,
+                        "eta": eta_str,
+                        "seconds": seconds
+                    })
+
+    true_fgv_id = clean_id
+    connector = aiohttp.TCPConnector(ssl=False)
+    async with aiohttp.ClientSession(connector=connector) as session:
+        # Try horarios-cercanos first
+        if lat and lng:
+            url_cercanos = f'https://www.fgv.es/fgv/app/es/api/v1/{city_code}/horarios-cercanos?latitud={lat}&longitud={lng}'
             try:
+                async with session.get(url_cercanos, headers={'User-Agent': 'okhttp/4.10.0', 'Accept': 'application/json'}, timeout=10) as response:
+                    text = await response.text()
+                    res = json.loads(text)
+                    if not isinstance(res, list): res = [res]
+                    
+                    if res:
+                        # Find the closest station to avoid merging nearby stations
+                        closest_station = min(res, key=lambda x: x.get('estacion', {}).get('distancia_actual', 9999))
+                        dist = closest_station.get('estacion', {}).get('distancia_actual', 9999)
+                        
+                        # Dynamically discover the true FGV API ID!
+                        discovered_id = closest_station.get('estacion', {}).get('estacion_id_FGV')
+                        if discovered_id:
+                            true_fgv_id = str(discovered_id)
+                            
+                        if dist <= 150:
+                            add_previsiones(closest_station.get('previsiones', []))
+            except Exception as e:
+                print(f"Error in cercanos: {e}")
+
+        # Also try horarios-prevision-3 as fallback
+        url_prevision = f'https://www.fgv.es/fgv/app/es/api/v1/{city_code}/horarios-prevision-3/{true_fgv_id}'
+        try:
+            async with session.get(url_prevision, headers={'User-Agent': 'okhttp/4.10.0', 'Accept': 'application/json'}, timeout=10) as response:
+                text = await response.text()
                 res = json.loads(text)
-            except Exception:
-                res = {}
+                add_previsiones(res.get('previsiones', []))
+        except Exception as e:
+            print(f"Error in prevision: {e}")
+
+        # Ultimate fallback: scrape WordPress admin-ajax if both APIs failed
+        if not arrivals:
+            wp_id = clean_id
+            if city_code == "V":
+                # Try to map API ID to WP ID for Metrovalencia
+                if clean_id in metro_wp_mapping:
+                    wp_id = metro_wp_mapping[clean_id]
+                else:
+                    wp_id = None
             
-            previsiones = res.get('previsiones', [])
-            arrivals = []
-            for p in previsiones:
-                minutos = p.get('minutos', 0)
-                eta_str = f"{minutos} min" if minutos > 0 else "0 min"
-                arrivals.append({
-                    "line": f"L{p.get('linea')}",
-                    "destination": p.get('destino'),
-                    "eta": eta_str
-                })
-            return arrivals
+            if wp_id:
+                wp_url = f'https://www.{"metrovalencia" if city_code == "V" else "tramalacant"}.es/wp-admin/admin-ajax.php'
+                wp_data = f"action=formularios_ajax&data=action%3Dinfo-estacion%26id%3D{wp_id}"
+                headers = {'User-Agent': 'Mozilla/5.0', 'Content-Type': 'application/x-www-form-urlencoded'}
+                try:
+                    async with session.post(wp_url, data=wp_data, headers=headers, timeout=5) as response:
+                        text = await response.text()
+                        try:
+                            res_json = json.loads(text)
+                            html = res_json.get('html', '')
+                        except:
+                            html = ''
+                            
+                        if html:
+                            import re
+                            blocks = html.split('item--proximos')[1:]
+                            for block in blocks:
+                                line_match = re.search(r'linea-(\d+)', block)
+                                dest_match = re.search(r'<div class="nombre-estacion">([^<]+)</div>', block)
+                                time_match = re.search(r'<span class="minutos[^>]*>([^<]+)</span>', block)
+                                
+                                if dest_match and time_match:
+                                    line_name = f"L{line_match.group(1)}" if line_match else "Tram"
+                                    dest = dest_match.group(1).strip()
+                                    eta_str = time_match.group(1).strip()
+                                    
+                                    seconds = 9999
+                                    if 'min' in eta_str.lower():
+                                        try:
+                                            m = int(re.search(r'\d+', eta_str).group(0))
+                                            seconds = m * 60
+                                        except:
+                                            pass
+                                    elif 'próx' in eta_str.lower() or 'prox' in eta_str.lower():
+                                        seconds = 0
+                                            
+                                    sig = f"{line_name}_{dest}_{eta_str}"
+                                    if sig not in arrivals_set:
+                                        arrivals_set.add(sig)
+                                        arrivals.append({
+                                            "line": line_name,
+                                            "destination": dest,
+                                            "eta": eta_str,
+                                            "realtime": False,
+                                            "_seconds": seconds
+                                        })
+                                    
+                except Exception as e:
+                    print(f"Error in WP fallback: {e}")
+
+    # Sort by ETA
+    arrivals.sort(key=lambda x: x.get('seconds', 9999))
+    
+    # Remove seconds key before returning
+    for a in arrivals:
+        a.pop('seconds', None)
+        
+    return arrivals
+
+async def fetch_metro_eta(stop_id: str):
+    return await fetch_fgv_eta(stop_id, "V", "metro-")
 
 async def fetch_tram_eta(stop_id: str):
-    stop_id = stop_id.replace("tram-", "")
-    url = f'https://www.fgv.es/fgv/app/es/api/v1/A/horarios-prevision-3/{stop_id}'
-    
-    async with aiohttp.ClientSession() as session:
-        async with session.get(url, headers={'User-Agent': 'TRAM/1.18.0 (Android)', 'Accept': 'application/json'}, timeout=10) as response:
-            try:
-                res = await response.json()
-                arrivals = []
-                for prev in res.get('previsiones', []):
-                    line = str(prev.get('linea', ''))
-                    dest = prev.get('destino', '')
-                    mins = prev.get('minutos', 0)
-                    
-                    if str(mins).isdigit():
-                        mins_str = "Próximo" if int(mins) == 0 else f"{mins} min"
-                    else:
-                        mins_str = str(mins)
-                        
-                    arrivals.append({
-                        "line": f"L{line}" if not line.startswith('L') else line,
-                        "destination": dest,
-                        "eta": mins_str
-                    })
-                return arrivals
-            except Exception as e:
-                print(f"Error fetching TRAM ETAs: {e}")
-                return []
+    return await fetch_fgv_eta(stop_id, "A", "tram-")
 
 def get_emt_wsse_header():
     user_key = "7gH8m45w7A"
