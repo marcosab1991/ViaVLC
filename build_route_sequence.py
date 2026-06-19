@@ -70,47 +70,38 @@ for route in routes:
     if not route_stops:
         continue
         
-    # Flatten geometry to single path
-    path = []
-    for way in geom['coordinates']:
-        for pt in way:
-            path.append((pt[1], pt[0])) # lat, lng
-            
-    if len(path) < 2:
-        continue
-        
-    results = []
-    for s in route_stops:
-        slat, slng = s['lat'], s['lng']
-        best_dist = float('inf')
-        best_along = 0.0
-        dist_along = 0.0
-        
-        for i in range(len(path)-1):
-            lat1, lng1 = path[i]
-            lat2, lng2 = path[i+1]
-            seg_len = haversine(lat1, lng1, lat2, lng2)
-            
-            d_ortho, d_proj = point_to_segment_distance(slng, slat, lng1, lat1, lng2, lat2)
-            d_ortho_m = d_ortho * 111000
-            
-            if d_ortho_m < best_dist:
-                best_dist = d_ortho_m
-                seg_hypot = math.hypot(lng2 - lng1, lat2 - lat1)
-                t = d_proj / seg_hypot if seg_hypot > 0 else 0
-                best_along = dist_along + (t * seg_len)
+    # Sort route_stops using Nearest Neighbor algorithm
+    max_d = -1
+    start_stop = route_stops[0]
+    for s1 in route_stops:
+        for s2 in route_stops:
+            d = haversine(s1['lat'], s1['lng'], s2['lat'], s2['lng'])
+            if d > max_d:
+                max_d = d
+                start_stop = s1
                 
-            dist_along += seg_len
-            
-        if best_dist < 500:
-            results.append({
-                'id': s['id'],
-                'name': s['name'],
-                'dist_along': best_along,
-                'ortho_dist': best_dist
-            })
-            
-    results.sort(key=lambda x: x['dist_along'])
+    unvisited = route_stops[:]
+    unvisited.remove(start_stop)
+    ordered = [start_stop]
+    
+    while unvisited:
+        curr = ordered[-1]
+        closest = min(unvisited, key=lambda s: haversine(curr['lat'], curr['lng'], s['lat'], s['lng']))
+        ordered.append(closest)
+        unvisited.remove(closest)
+        
+    # Build results matching the required format
+    results = []
+    dist_along = 0.0
+    for i, s in enumerate(ordered):
+        if i > 0:
+            dist_along += haversine(ordered[i-1]['lat'], ordered[i-1]['lng'], s['lat'], s['lng'])
+        results.append({
+            'id': s['id'],
+            'name': s['name'],
+            'dist_along': dist_along,
+            'ortho_dist': 0.0
+        })
     
     c_lines.execute("INSERT INTO route_stops (route_id, stops_json) VALUES (?, ?)", 
                    (rid, json.dumps(results)))

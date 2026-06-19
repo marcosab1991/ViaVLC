@@ -1036,15 +1036,30 @@ journeySearchBtn.addEventListener('click', async () => {
 function renderJourneyResults(routes) {
     journeyResultsDiv.innerHTML = '';
     
+    if (!routes || routes.length === 0) {
+        journeyResultsDiv.innerHTML = '<div class="error-msg" style="padding:15px;text-align:center;">🌙 No se encontraron rutas activas en este momento.<br><br><span style="font-size:0.9em;color:#666">Los serviços de transporte pueden estar cerrados o sin vehículos en circulación hacia tu destino.</span></div>';
+        return;
+    }
+    
     routes.forEach((route, idx) => {
         const card = document.createElement('div');
         card.className = 'route-card';
         
         // Count total time
         let totalMins = 0;
-        route.legs.forEach(leg => totalMins += leg.time || 0);
+        let waitHtml = '';
         
-        let legsHtml = '';
+        route.legs.forEach(leg => {
+            totalMins += leg.time || 0;
+            if (leg.wait_time && leg.wait_time > 0) {
+                totalMins += leg.wait_time;
+                waitHtml = `<div class="route-leg" style="border-left: 3px dashed #ccc; margin-left: 5px; padding-left: 15px;">
+                    <span style="color:#666">⏳</span> <span style="color:#666">Espera de <b>${leg.wait_time} min</b></span>
+                </div>`;
+            }
+        });
+        
+        let legsHtml = waitHtml;
         let hasRealtime = false;
         
         route.legs.forEach(leg => {
