@@ -294,6 +294,8 @@ async def fetch_fgv_eta(stop_id: str, city_code: str, prefix: str):
 
     true_fgv_id = clean_id
     connector = aiohttp.TCPConnector(ssl=False)
+    last_error = None
+    
     async with aiohttp.ClientSession(connector=connector) as session:
         # Try horarios-cercanos first
         if lat and lng:
@@ -317,6 +319,7 @@ async def fetch_fgv_eta(stop_id: str, city_code: str, prefix: str):
                         if dist <= 150:
                             add_previsiones(closest_station.get('previsiones', []))
             except Exception as e:
+                last_error = e
                 print(f"Error in cercanos: {e}")
 
         # Also try horarios-prevision-3 as fallback
@@ -327,6 +330,7 @@ async def fetch_fgv_eta(stop_id: str, city_code: str, prefix: str):
                 res = json.loads(text)
                 add_previsiones(res.get('previsiones', []))
         except Exception as e:
+            last_error = e
             print(f"Error in prevision: {e}")
 
         # Ultimate fallback: scrape WordPress admin-ajax if both APIs failed
@@ -387,7 +391,11 @@ async def fetch_fgv_eta(stop_id: str, city_code: str, prefix: str):
                                         })
                                     
                 except Exception as e:
+                    last_error = e
                     print(f"Error in WP fallback: {e}")
+
+    if not arrivals and last_error:
+        raise last_error
 
     # Sort by ETA
     arrivals.sort(key=lambda x: x.get('seconds', 9999))
@@ -460,6 +468,7 @@ def fetch_bus_eta_sync(stop_id: str):
             })
     except Exception as e:
         print(f"Error fetching EMT ETAs for stop {stop_id}: {e}")
+        raise e
         
     return arrivals
 
