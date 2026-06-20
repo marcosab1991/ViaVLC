@@ -1049,22 +1049,18 @@ function renderJourneyResults(routes) {
         const card = document.createElement('div');
         card.className = 'route-card';
         
-        // Count total time
         let totalMins = 0;
-        let waitHtml = '';
+        let hasRealtime = false;
         
+        // Count total time first
         route.legs.forEach(leg => {
             totalMins += leg.time || 0;
             if (leg.wait_time && leg.wait_time > 0) {
                 totalMins += leg.wait_time;
-                waitHtml = `<div class="route-leg" style="border-left: 3px dashed #ccc; margin-left: 5px; padding-left: 15px;">
-                    <span style="color:#666">⏳</span> <span style="color:#666">Espera de <b>${leg.wait_time} min</b></span>
-                </div>`;
             }
         });
         
-        let legsHtml = waitHtml;
-        let hasRealtime = false;
+        let legsHtml = '';
         
         route.legs.forEach(leg => {
             if (leg.type === 'walk') {
@@ -1076,8 +1072,14 @@ function renderJourneyResults(routes) {
                 const isMetrobus = leg.type === 'metrobus';
                 const badgeColor = isBus ? '#ef4444' : (isMetrobus ? '#FFB81C' : '#3b82f6');
                 
+                if (leg.wait_time && leg.wait_time > 0) {
+                    legsHtml += `<div class="route-leg" style="border-left: 3px dashed #ccc; margin-left: 5px; padding-left: 15px;">
+                        <span style="color:#666">⏳</span> <span style="color:#666">Espera de <b>${leg.wait_time} min</b></span>
+                    </div>`;
+                }
+                
                 let etaInfo = '';
-                if (leg.live_eta !== undefined) {
+                if (leg.live_eta !== undefined && leg.live_eta !== "N/A") {
                     etaInfo = ` <span style="color:#22c55e;font-weight:600">(Llega a las ${leg.live_eta})</span>`;
                     hasRealtime = true;
                 }

@@ -944,8 +944,9 @@ async def get_journey(orig_lat: float, orig_lng: float, dest_lat: float, dest_ln
                         
                     leg['wait_time'] = best_wait
                     leg['live_eta'] = best_eta
-                    leg['time'] += best_wait
-                    cumulative_time += leg['time']
+                    # Do NOT modify leg['time'] here, otherwise the frontend shows 'Viajar durante 38 min' 
+                    # and double-counts totalMins!
+                    cumulative_time += (leg['time'] + best_wait)
                     
         if pruned_any:
             continue
