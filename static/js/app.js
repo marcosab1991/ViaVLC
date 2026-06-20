@@ -200,8 +200,12 @@ exitRouteBtn.addTo(map);
 document.getElementById('exit-route-btn').addEventListener('click', () => {
     if (currentRouteLayer) map.removeLayer(currentRouteLayer);
     if (routeStopsLayer) map.removeLayer(routeStopsLayer);
+    if (window.currentJourneyLayer) map.removeLayer(window.currentJourneyLayer);
+    if (window.journeyMarkersLayer) map.removeLayer(window.journeyMarkersLayer);
     currentRouteLayer = null;
     routeStopsLayer = null;
+    window.currentJourneyLayer = null;
+    window.journeyMarkersLayer = null;
     map.addLayer(markersLayer); // Restore all markers
     document.getElementById('map').classList.remove('route-mode-active');
     document.querySelector('.main-header').classList.remove('route-mode-active');
@@ -1098,18 +1102,65 @@ function renderJourneyResults(routes) {
             }
         `;
         
-        card.onclick = async () => {
-            if (currentRouteLine) { map.removeLayer(currentRouteLine); }
-            // For now we just draw the first route id found, multi-leg drawing can be improved later
-            if (route.route_ids && route.route_ids.length > 0) {
-                const lineRes = await fetch(`/api/line_geometry?route_id=${route.route_ids[0]}`);
-                const lineData = await lineRes.json();
-                if (lineData.success && lineData.geometry) {
-                    const geojson = JSON.parse(lineData.geometry);
-                    currentRouteLine = L.geoJSON(geojson, {
-                        style: { color: '#333', weight: 4, opacity: 0.8 }
-                    }).addTo(map);
+        card.onclick = () => {
+            console.log('Drawing journey route!');
+            if (window.currentJourneyLayer) { map.removeLayer(window.currentJourneyLayer); }
+            if (window.journeyMarkersLayer) { map.removeLayer(window.journeyMarkersLayer); }
+            
+            // Enter route mode visual styles
+            document.getElementById('exit-route-btn').style.display = 'block';
+            document.getElementById('map').classList.add('route-mode-active');
+            document.querySelector('.main-header').classList.add('route-mode-active');
+            map.closePopup();
+            map.removeLayer(markersLayer);
+            
+            const journeyFeatureGroup = L.featureGroup();
+            window.journeyMarkersLayer = journeyFeatureGroup;
+            window.currentJourneyLayer = journeyFeatureGroup;
+            
+            route.legs.forEach(leg => {
+                if (leg.stops_coords && leg.stops_coords.length > 0) {
+                    const isWalk = leg.type === 'walk';
+                    const isBus = leg.type === 'bus';
+                    const isMetrobus = leg.type === 'metrobus';
+                    const color = isWalk ? '#888' : (isBus ? '#ef4444' : (isMetrobus ? '#FFB81C' : '#3b82f6'));
+                    
+                    // Draw Polyline connecting stops
+                    L.polyline(leg.stops_coords, {
+                        color: color,
+                        weight: isWalk ? 4 : 5,
+                        dashArray: isWalk ? '5, 10' : null,
+                        opacity: 0.8
+                    }).addTo(journeyFeatureGroup);
+                    
+                    // Draw Markers for Stops (only for transit legs)
+                    if (!isWalk && leg.stops_coords.length > 0) {
+                        // Draw origin circle
+                        L.circleMarker(leg.stops_coords[0], {
+                            radius: 5, fillColor: '#fff', color: color, weight: 2, fillOpacity: 1
+                        }).bindPopup(`<b>Inicio de tramo</b><br>${leg.orig_stop || ''}<br>Línea ${leg.line}`).addTo(journeyFeatureGroup);
+                        
+                        // Draw destination circle
+                        L.circleMarker(leg.stops_coords[leg.stops_coords.length - 1], {
+                            radius: 5, fillColor: '#fff', color: color, weight: 2, fillOpacity: 1
+                        }).bindPopup(`<b>Fin de tramo</b><br>${leg.dest_stop || ''}<br>Línea ${leg.line}`).addTo(journeyFeatureGroup);
+                        
+                        // Intermediate stops
+                        if (leg.stops_names && leg.stops_names.length > 2) {
+                            for (let i = 1; i < leg.stops_coords.length - 1; i++) {
+                                L.circleMarker(leg.stops_coords[i], {
+                                    radius: 3, fillColor: color, color: '#fff', weight: 1, fillOpacity: 1
+                                }).bindPopup(`<b>Parada</b><br>${leg.stops_names[i]}`).addTo(journeyFeatureGroup);
+                            }
+                        }
+                    }
                 }
+            });
+            
+            journeyFeatureGroup.addTo(map);
+            
+            if (journeyFeatureGroup.getLayers().length > 0) {
+                map.fitBounds(journeyFeatureGroup.getBounds(), { padding: [50, 50] });
             }
         };
         

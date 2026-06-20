@@ -11,12 +11,8 @@ EXTRACT_DIR = "gtfs_data"
 
 def download_and_extract():
     if not os.path.exists(ZIP_PATH):
-        print("Downloading EMT GTFS...")
-        # Add headers to bypass 403 Forbidden
-        req = urllib.request.Request(GTFS_URL, headers={'User-Agent': 'Mozilla/5.0'})
-        with urllib.request.urlopen(req) as response, open(ZIP_PATH, 'wb') as out_file:
-            out_file.write(response.read())
-        print("Download complete.")
+        print("GTFS zip not found locally! Please place it as googletransit.zip")
+        return
     
     if not os.path.exists(EXTRACT_DIR):
         print("Extracting GTFS...")
@@ -33,20 +29,29 @@ def process_gtfs():
     # Map route_id to route_short_name
     route_map = dict(zip(routes_df['route_id'], routes_df['route_short_name']))
     
-    # Get the trip with max stops for each route and direction
+    # Get the trip with max stops for each route and shape_id
     trip_counts = stop_times_df.groupby('trip_id').size().reset_index(name='stop_count')
     trips_with_counts = pd.merge(trips_df, trip_counts, on='trip_id')
     
-    # Sort by stop_count descending, then drop duplicates by route_id and direction_id
-    longest_trips = trips_with_counts.sort_values('stop_count', ascending=False).drop_duplicates(['route_id', 'direction_id'])
+    # Sort by stop_count descending, then drop duplicates by route_id and shape_id
+    longest_trips = trips_with_counts.sort_values('stop_count', ascending=False).drop_duplicates(['route_id', 'shape_id'])
     
     line_routes = []
+    
+    # We need to assign an artificial direction_id since EMT doesn't provide one
+    route_directions = {}
     
     for _, row in longest_trips.iterrows():
         trip_id = row['trip_id']
         route_id = row['route_id']
-        direction_id = row['direction_id']
+        shape_id = row.get('shape_id', '')
         route_short_name = str(route_map.get(route_id, ""))
+        
+        # Assign 0 or 1 sequentially
+        if route_short_name not in route_directions:
+            route_directions[route_short_name] = 0
+        direction_id = route_directions[route_short_name]
+        route_directions[route_short_name] += 1
         
         # Get stop_times for this trip, ordered by stop_sequence
         trip_stops = stop_times_df[stop_times_df['trip_id'] == trip_id].sort_values('stop_sequence')
@@ -55,7 +60,7 @@ def process_gtfs():
         
         line_routes.append({
             "line": route_short_name,
-            "direction": int(direction_id) if pd.notnull(direction_id) else 0,
+            "direction": direction_id,
             "stops": stop_ids
         })
         

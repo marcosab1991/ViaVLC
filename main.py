@@ -468,6 +468,9 @@ async def fetch_metrobus_eta(stop_id: str):
     Fetch ETA from Metrobus Softour API. If real-time is empty, fallback to schedules!
     """
     try:
+        if stop_id.startswith('gtfs-'):
+            return []
+            
         # Strip the prefix added to prevent DB collision with EMT
         actual_id = stop_id.replace("metrobus-", "") if stop_id.startswith("metrobus-") else stop_id
         
@@ -628,8 +631,11 @@ async def build_graph():
         TRANSIT_GRAPH = {sid: [] for sid in STOPS_CACHE.keys()}
         
         async with aiosqlite.connect('lines.db') as db:
-            cursor = await db.execute("SELECT route_id, ref, stops_json FROM route_stops JOIN routes ON routes.id = route_stops.route_id")
-            for rid, ref, stops_json in await cursor.fetchall():
+            cursor = await db.execute("SELECT route_id, ref, stops_json, type FROM route_stops JOIN routes ON routes.id = route_stops.route_id")
+            for rid, ref, stops_json, rtype in await cursor.fetchall():
+                if rtype == 'bus':
+                    continue # Ignore incomplete OSM bus routes!
+                    
                 seq = json.loads(stops_json)
                 for i in range(len(seq) - 1):
                     s1, s2 = seq[i], seq[i+1]
@@ -644,15 +650,47 @@ async def build_graph():
                     
                     TRANSIT_GRAPH[sid1].append((sid2, weight, 'transit', ref, stype, rid))
                     
-        sids = list(STOPS_CACHE.keys())
-        for i in range(len(sids)):
-            for j in range(i+1, len(sids)):
-                sid1, sid2 = sids[i], sids[j]
-                d = calculate_haversine(STOPS_CACHE[sid1]['lat'], STOPS_CACHE[sid1]['lng'], STOPS_CACHE[sid2]['lat'], STOPS_CACHE[sid2]['lng'])
-                if d <= 300: # 300m transfer distance
-                    weight = (d / WALK_SPEED) + TRANSFER_PENALTY
-                    TRANSIT_GRAPH[sid1].append((sid2, weight, 'transfer', 'walk', 'walk', None))
-                    TRANSIT_GRAPH[sid2].append((sid1, weight, 'transfer', 'walk', 'walk', None))
+        # Load GTFS Bus routes (Bi-directional)
+        async with aiosqlite.connect('stops.db') as db:
+            cursor = await db.execute("SELECT line, direction, stops_json, type FROM line_routes")
+            for ref, direction, stops_json, stype in await cursor.fetchall():
+                seq = json.loads(stops_json)
+                rid = f"gtfs_{ref}_{direction}"
+                for i in range(len(seq) - 1):
+                    sid1, sid2 = str(seq[i]), str(seq[i+1])
+                    if sid1 not in STOPS_CACHE or sid2 not in STOPS_CACHE: continue
+                    
+                    dist = calculate_haversine(STOPS_CACHE[sid1]['lat'], STOPS_CACHE[sid1]['lng'], STOPS_CACHE[sid2]['lat'], STOPS_CACHE[sid2]['lng'])
+                    if dist <= 0: dist = 100
+                    
+                    weight = dist / SPEEDS.get(stype, 15000/60) + 0.5 # 30s stop penalty
+                    TRANSIT_GRAPH[sid1].append((sid2, weight, 'transit', str(ref), stype, rid))
+                    
+        # Build spatial grid for O(N) transfer edge generation
+        grid = {}
+        grid_size = 0.003 # approx 300m
+        for sid, data in STOPS_CACHE.items():
+            bx = int(data['lat'] / grid_size)
+            by = int(data['lng'] / grid_size)
+            if (bx, by) not in grid: grid[(bx, by)] = []
+            grid[(bx, by)].append(sid)
+            
+        for (bx, by), bucket_sids in grid.items():
+            # Gather sids from this bucket and adjacent buckets
+            compare_sids = []
+            for dx in [-1, 0, 1]:
+                for dy in [-1, 0, 1]:
+                    compare_sids.extend(grid.get((bx + dx, by + dy), []))
+                    
+            for sid1 in bucket_sids:
+                for sid2 in compare_sids:
+                    if sid1 >= sid2: continue # Avoid duplicate pairs
+                    d = calculate_haversine(STOPS_CACHE[sid1]['lat'], STOPS_CACHE[sid1]['lng'], STOPS_CACHE[sid2]['lat'], STOPS_CACHE[sid2]['lng'])
+                    if d <= 300: # 300m transfer distance
+                        weight = (d / WALK_SPEED) + TRANSFER_PENALTY
+                        TRANSIT_GRAPH[sid1].append((sid2, weight, 'transfer', 'walk', 'walk', None))
+                        TRANSIT_GRAPH[sid2].append((sid1, weight, 'transfer', 'walk', 'walk', None))
+                        
         print("Graph built successfully.")
     except Exception as e:
         print(f"Error building graph: {e}")
@@ -752,7 +790,8 @@ async def get_journey(orig_lat: float, orig_lng: float, dest_lat: float, dest_ln
             'type': 'walk',
             'time': round(best_path[0][1]),
             'orig_lat': orig_lat, 'orig_lng': orig_lng,
-            'dest_stop': STOPS_CACHE[first_stop]['name']
+            'dest_stop': STOPS_CACHE[first_stop]['name'],
+            'stops_coords': [[orig_lat, orig_lng], [STOPS_CACHE[first_stop]['lat'], STOPS_CACHE[first_stop]['lng']]]
         })
         current_leg = None
         route_ids_used = set()
@@ -767,7 +806,8 @@ async def get_journey(orig_lat: float, orig_lng: float, dest_lat: float, dest_ln
                     'type': 'walk',
                     'time': round(w_edge),
                     'orig_stop': STOPS_CACHE[prev_node]['name'],
-                    'dest_lat': dest_lat, 'dest_lng': dest_lng
+                    'dest_lat': dest_lat, 'dest_lng': dest_lng,
+                    'stops_coords': [[STOPS_CACHE[prev_node]['lat'], STOPS_CACHE[prev_node]['lng']], [dest_lat, dest_lng]]
                 })
                 break
                 
@@ -779,7 +819,8 @@ async def get_journey(orig_lat: float, orig_lng: float, dest_lat: float, dest_ln
                     'type': 'walk',
                     'time': round(w_edge),
                     'orig_stop': STOPS_CACHE[prev_node]['name'],
-                    'dest_stop': STOPS_CACHE[node]['name']
+                    'dest_stop': STOPS_CACHE[node]['name'],
+                    'stops_coords': [[STOPS_CACHE[prev_node]['lat'], STOPS_CACHE[prev_node]['lng']], [STOPS_CACHE[node]['lat'], STOPS_CACHE[node]['lng']]]
                 })
             else:
                 if rid: route_ids_used.add(rid)
@@ -791,11 +832,21 @@ async def get_journey(orig_lat: float, orig_lng: float, dest_lat: float, dest_ln
                         'orig_id': prev_node,
                         'orig_stop': STOPS_CACHE[prev_node]['name'],
                         'dest_stop': STOPS_CACHE[node]['name'],
-                        'time': w_edge
+                        'time': w_edge,
+                        'stops_coords': [
+                            [STOPS_CACHE[prev_node]['lat'], STOPS_CACHE[prev_node]['lng']],
+                            [STOPS_CACHE[node]['lat'], STOPS_CACHE[node]['lng']]
+                        ],
+                        'stops_names': [
+                            STOPS_CACHE[prev_node]['name'],
+                            STOPS_CACHE[node]['name']
+                        ]
                     }
                 else:
                     current_leg['dest_stop'] = STOPS_CACHE[node]['name']
                     current_leg['time'] += w_edge
+                    current_leg['stops_coords'].append([STOPS_CACHE[node]['lat'], STOPS_CACHE[node]['lng']])
+                    current_leg['stops_names'].append(STOPS_CACHE[node]['name'])
                     
         for leg in legs:
             if 'time' in leg:
@@ -807,10 +858,16 @@ async def get_journey(orig_lat: float, orig_lng: float, dest_lat: float, dest_ln
         
         async def check_leg(leg):
             try:
-                eta_res = await asyncio.wait_for(get_eta(leg['orig_id'], leg['type']), timeout=8.0)
+                eta_res = await asyncio.wait_for(get_eta(leg['orig_id'], leg['type']), timeout=15.0)
                 if eta_res.get('success'):
-                    etas = [e for e in eta_res['data'] if str(e.get('line')) == str(leg['line'])]
+                    def match_line(api_line, graph_line):
+                        a = str(api_line).lstrip('L').lower()
+                        b = str(graph_line).lstrip('L').lower()
+                        return a == b
+                        
+                    etas = [e for e in eta_res['data'] if match_line(e.get('line'), leg['line'])]
                     if not etas:
+                        # Real-time API succeeded but returned no ETAs for this line
                         return leg # This leg is dead!
                     
                     eta_val = etas[0].get('eta')
@@ -821,9 +878,11 @@ async def get_journey(orig_lat: float, orig_lng: float, dest_lat: float, dest_ln
                         
                     return (leg, eta_val)
                 else:
-                    return leg # API explicitly failed, assume dead
+                    # API explicitly failed, do not prune, just return None
+                    return None
             except Exception as e:
-                return leg # Timeout or other error, assume dead
+                # Timeout or other error, do not prune
+                return None
             
         if transit_legs:
             results = await asyncio.gather(*(check_leg(l) for _, l in transit_legs))

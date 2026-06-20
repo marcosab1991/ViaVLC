@@ -1,4 +1,4 @@
-const CACHE_NAME = 'viavlc-cache-v3';
+const CACHE_NAME = 'viavlc-cache-v6';
 const urlsToCache = [
   '/',
   '/css/style.css',
