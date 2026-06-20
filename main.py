@@ -440,7 +440,7 @@ def fetch_bus_eta_sync(stop_id: str):
     
     import xml.etree.ElementTree as ET
     try:
-        resp = urllib.request.urlopen(req, timeout=4)
+        resp = urllib.request.urlopen(req, timeout=10)
         xml_data = resp.read().decode('utf-8', errors='ignore')
         root = ET.fromstring(xml_data)
         
@@ -461,15 +461,25 @@ def fetch_bus_eta_sync(stop_id: str):
             if "min" in mins.lower():
                 mins = mins.lower().replace("min.", "").replace("min", "").strip()
                 
+            eta_val = "Próximo" if mins == "0" else f"{mins} min" if mins.isdigit() else mins
             arrivals.append({
                 "line": str(line),
-                "eta": "Próximo" if mins == "0" else f"{mins} min" if mins.isdigit() else mins,
+                "eta": eta_val,
                 "destination": str(dest)
             })
+            
     except Exception as e:
         print(f"Error fetching EMT ETAs for stop {stop_id}: {e}")
         raise e
         
+    def _sort_eta(x):
+        val = x.get('eta', '')
+        if "próx" in val.lower() or "prox" in val.lower(): return 0
+        import re
+        nums = re.findall(r'\d+', val)
+        return int(nums[0]) if nums else 999
+        
+    arrivals.sort(key=_sort_eta)
     return arrivals
 
 async def fetch_metrobus_eta(stop_id: str):
