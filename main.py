@@ -875,9 +875,9 @@ async def get_journey(orig_lat: float, orig_lng: float, dest_lat: float, dest_ln
         transit_legs = [(i, l) for i, l in enumerate(legs) if l['type'] not in ['walk']]
         pruned_any = False
         
-        async def check_leg(leg):
+        async def fetch_raw_etas(leg):
             try:
-                eta_res = await asyncio.wait_for(get_eta(leg['orig_id'], leg['type']), timeout=15.0)
+                eta_res = await asyncio.wait_for(get_eta(leg['orig_id'], leg['type']), timeout=10.0)
                 if eta_res.get('success'):
                     def match_line(api_line, graph_line):
                         a = str(api_line).lstrip('L').lower()
@@ -885,41 +885,68 @@ async def get_journey(orig_lat: float, orig_lng: float, dest_lat: float, dest_ln
                         return a == b
                         
                     etas = [e for e in eta_res['data'] if match_line(e.get('line'), leg['line'])]
-                    if not etas:
-                        # Real-time API succeeded but returned no ETAs for this line
-                        return leg # This leg is dead!
-                    
-                    eta_val = etas[0].get('eta')
-                    eta_mins = parse_time_str(eta_val)
-                    if eta_mins > 90:
-                        # Wait time is absurd, consider it dead to force fallback
-                        return leg
-                        
-                    return (leg, eta_val)
-                else:
-                    # API explicitly failed, do not prune, just return None
-                    return None
-            except Exception as e:
-                # Timeout or other error, do not prune
+                    return etas
                 return None
-            
+            except Exception:
+                return None
+
         if transit_legs:
-            results = await asyncio.gather(*(check_leg(l) for _, l in transit_legs))
-            for i, res in enumerate(results):
-                idx, leg = transit_legs[i]
-                if res is leg: # Dead!
-                    disabled_lines.add((leg['line'], leg['type']))
-                    pruned_any = True
-                elif isinstance(res, tuple):
-                    _, eta_val = res
-                    leg['live_eta'] = eta_val
-                    if i == 0: # Only calculate wait_time for the very first transit leg
-                        walk_time = sum(l['time'] for l in legs[:idx])
-                        eta_mins = parse_time_str(eta_val)
-                        if eta_mins != float('inf'):
-                            wait_time = max(0, eta_mins - walk_time)
-                            leg['wait_time'] = wait_time
-                            
+            raw_eta_results = await asyncio.gather(*(fetch_raw_etas(l) for _, l in transit_legs))
+            eta_map = {l['orig_id']: res for (_, l), res in zip(transit_legs, raw_eta_results)}
+            
+            cumulative_time = 0
+            for leg in legs:
+                if leg['type'] == 'walk':
+                    cumulative_time += leg['time']
+                else:
+                    etas = eta_map.get(leg['orig_id'])
+                    
+                    if etas is None:
+                        # API explicitly failed (e.g. Timeout/Cloudflare). Fallback to 0 wait.
+                        leg['wait_time'] = 0
+                        leg['live_eta'] = "N/A"
+                        cumulative_time += leg['time']
+                        continue
+                        
+                    if not etas:
+                        # API succeeded but line has no ETAs -> Line is dead!
+                        disabled_lines.add((leg['line'], leg['type']))
+                        pruned_any = True
+                        break
+                        
+                    # Find first bus/train that departs AFTER we arrive at the stop
+                    best_wait = float('inf')
+                    best_eta = None
+                    
+                    for e in etas:
+                        eta_mins = parse_time_str(e.get('eta'))
+                        if eta_mins == float('inf'): continue
+                        
+                        # Can we catch this vehicle?
+                        if eta_mins >= cumulative_time:
+                            wait = eta_mins - cumulative_time
+                            if wait < best_wait:
+                                best_wait = wait
+                                best_eta = e.get('eta')
+                                
+                    if best_eta is None:
+                        # We missed all listed vehicles (e.g. they arrive before we get there)
+                        # We shouldn't prune the route because more will come later.
+                        # Fallback to an average wait (10 mins)
+                        best_wait = 10
+                        best_eta = "N/A"
+                        
+                    if best_wait > 90:
+                        # Wait time is absurd, consider it dead
+                        disabled_lines.add((leg['line'], leg['type']))
+                        pruned_any = True
+                        break
+                        
+                    leg['wait_time'] = best_wait
+                    leg['live_eta'] = best_eta
+                    leg['time'] += best_wait
+                    cumulative_time += leg['time']
+                    
         if pruned_any:
             continue
                 
