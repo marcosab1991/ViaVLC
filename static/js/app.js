@@ -83,8 +83,8 @@ function clusterStops(stops) {
             if (used.has(stops[j].id)) continue;
             
             // Prevent clustering road networks (bus/metrobus) with rail networks (metro/tram)
-            const isIRail = stops[i].type === 'metro' || stops[i].type === 'tram';
-            const isJRail = stops[j].type === 'metro' || stops[j].type === 'tram';
+            const isIRail = stops[i].type === 'metro' || (stops[i].type === 'tram' || stops[i].type === 'tram_alicante');
+            const isJRail = stops[j].type === 'metro' || (stops[j].type === 'tram' || stops[j].type === 'tram_alicante');
             if (isIRail !== isJRail) continue;
             
             const distSq = Math.pow(stops[i].location.lat - stops[j].location.lat, 2) + 
@@ -104,8 +104,9 @@ function clusterStops(stops) {
 
 let markersLayer = L.layerGroup().addTo(map);
 let activeMarkers = {}; // Keep track of rendered markers by ID
-let currentRouteLayer = null; // Store current OSRM route layer
-let routeStopsLayer = null; // Store route stops by ID
+let currentRouteLayer = null; // Store current active route layer
+let currentBaseRouteLayer = null; // Store current base network layer
+let routeStopsLayer = null; // Store stops along the route stops by ID
 let userMarker = null;
 let userCurrentLatLng = null;
 
@@ -199,10 +200,12 @@ exitRouteBtn.addTo(map);
 
 document.getElementById('exit-route-btn').addEventListener('click', () => {
     if (currentRouteLayer) map.removeLayer(currentRouteLayer);
+    if (currentBaseRouteLayer) map.removeLayer(currentBaseRouteLayer);
     if (routeStopsLayer) map.removeLayer(routeStopsLayer);
     if (window.currentJourneyLayer) map.removeLayer(window.currentJourneyLayer);
     if (window.journeyMarkersLayer) map.removeLayer(window.journeyMarkersLayer);
     currentRouteLayer = null;
+    currentBaseRouteLayer = null;
     routeStopsLayer = null;
     window.currentJourneyLayer = null;
     window.journeyMarkersLayer = null;
@@ -229,7 +232,7 @@ searchInput.addEventListener('input', (e) => {
             if (data.success && data.data.length > 0) {
                 searchResults.innerHTML = data.data.map(stop => {
                     const isBus = stop.type === 'bus';
-                    const isTram = stop.type === 'tram';
+                    const isTram = (stop.type === 'tram' || stop.type === 'tram_alicante');
                     const isMetrobus = stop.type === 'metrobus';
                     const badgeClass = isBus ? 'bus-line' : (isTram ? 'tram-line' : (isMetrobus ? 'metrobus-line' : 'metro-line'));
                     const badgeText = isBus ? 'EMT' : (isTram ? 'TRAM' : (isMetrobus ? 'M-Bus' : 'Metro'));
@@ -358,7 +361,7 @@ function renderMarkers(stops) {
     
     clusters.forEach(cluster => {
         // Filter members by active networks
-        const activeMembers = cluster.members.filter(m => showNetwork[m.type]);
+        const activeMembers = cluster.members.filter(m => m.type === 'tram_alicante' ? showNetwork['tram'] : showNetwork[m.type]);
         if (activeMembers.length === 0) return;
         
         const activeIds = activeMembers.map(m => m.id).sort().join('-');
@@ -378,7 +381,7 @@ function renderMarkers(stops) {
         const types = [...new Set(activeMembers.map(m => m.type))];
         if (types.length === 1) {
             const type = types[0];
-            icon = type === 'bus' ? busIcon : (type === 'tram' ? tramIcon : (type === 'metrobus' ? metrobusIcon : metroIcon));
+            icon = type === 'bus' ? busIcon : ((type === 'tram' || type === 'tram_alicante') ? tramIcon : (type === 'metrobus' ? metrobusIcon : metroIcon));
         } else {
             if (types.includes('bus') && types.includes('metrobus') && types.length === 2) {
                 icon = createHybridIcon('#ef4444', '#FFB81C');
@@ -444,8 +447,9 @@ async function loadStopData(marker, stop, filterLine = null) {
     const popup = marker.getPopup();
     if (!popup) return;
     const isBus = stop.type === 'bus';
-    const isTram = stop.type === 'tram';
+    const isTram = (stop.type === 'tram' || stop.type === 'tram_alicante');
     const isMetrobus = stop.type === 'metrobus';
+    const isMetro = stop.type === 'metro';
     const typeLabel = isBus ? "EMT Autobús" : (isTram ? "TRAM d'Alacant" : (isMetrobus ? "Metrobús" : "Metrovalencia"));
     
     // Set loading content
@@ -500,10 +504,17 @@ async function loadStopData(marker, stop, filterLine = null) {
                         if (m) displayEta = `${m[0]} min`;
                     }
                     
+                    let displayLine = String(arrival.line);
+                    if ((isMetro || isTram) && !displayLine.startsWith('L')) {
+                        displayLine = 'L' + displayLine;
+                    }
+                    const stopLat = stop.location ? stop.location.lat : stop.lat;
+                    const stopLng = stop.location ? stop.location.lng : stop.lng;
+                    
                     return `
-                    <div class="arrival-item" onclick="drawRoute('${arrival.line}', '${stop.type}', '${stop.id}', '${(arrival.destination || '').replace(/'/g, "\\'")}')" style="cursor: pointer;" title="Ver Ruta">
+                    <div class="arrival-item" onclick="drawRoute('${arrival.line}', '${stop.type}', '${stop.id}', '${(arrival.destination || '').replace(/'/g, "\\'")}', ${stopLat}, ${stopLng})" style="cursor: pointer;" title="Ver Ruta">
                         <div class="arrival-left">
-                            <span class="line-badge ${lineClass}" style="${badgeStyle}">${arrival.line}</span>
+                            <span class="line-badge ${lineClass}" style="${badgeStyle}">${displayLine}</span>
                             ${arrival.destination ? `<span class="arrival-dest">${arrival.destination}</span>` : ''}
                         </div>
                         <span class="eta-time">${iconHtml}${displayEta}</span>
@@ -512,7 +523,7 @@ async function loadStopData(marker, stop, filterLine = null) {
                 }).join('');
                 
                 if (hasTheoretical) {
-                    linesHtml += '<div style="font-size:11px; color:#666; margin-top:8px; text-align:center;">📅 Horarios teóricos planeados (GPS inactivo)</div>';
+                    linesHtml += '<div style="font-size:11px; color:#666; margin-top:8px; text-align:center;">📅 Horarios programados (GPS inactivo)</div>';
                 }
             }
             
@@ -543,7 +554,7 @@ async function loadClusterData(marker, activeMembers) {
     
     // Combine names uniquely
     const names = [...new Set(activeMembers.map(m => m.name))].join(' / ');
-    const types = [...new Set(activeMembers.map(m => m.type === 'bus' ? 'EMT' : (m.type === 'metrobus' ? 'Metrobús' : (m.type === 'tram' ? 'TRAM' : 'Metrovalencia'))))].join(' + ');
+    const types = [...new Set(activeMembers.map(m => m.type === 'bus' ? 'EMT' : (m.type === 'metrobus' ? 'Metrobús' : (m.type === 'tram' || m.type === 'tram_alicante' ? 'TRAM' : 'Metrovalencia'))))].join(' + ');
     
     popup.setContent(`
         <div class="popup-title">${names}</div>
@@ -561,7 +572,12 @@ async function loadClusterData(marker, activeMembers) {
             if (stop.type === 'bus') {
                 data = await fetchDirectBusEta(stop.id);
                 if (data.success && data.data) {
-                    data.data.forEach(arr => arr._parentType = 'bus');
+                    data.data.forEach(arr => {
+                        arr._parentType = 'bus';
+                        arr._originStopId = stop.id;
+                        arr._originLat = stop.location.lat;
+                        arr._originLng = stop.location.lng;
+                    });
                     allArrivals.push(...data.data);
                 } else {
                     hasError = true;
@@ -570,7 +586,12 @@ async function loadClusterData(marker, activeMembers) {
                 const response = await fetch(`/api/eta?id=${stop.id}&type=${stop.type}&_cb=${Date.now()}`);
                 data = await response.json();
                 if (data.success && data.data) {
-                    data.data.forEach(arr => arr._parentType = stop.type);
+                    data.data.forEach(arr => {
+                        arr._parentType = stop.type;
+                        arr._originStopId = stop.id;
+                        arr._originLat = stop.location.lat;
+                        arr._originLng = stop.location.lng;
+                    });
                     allArrivals.push(...data.data);
                     if (data.cached) isCached = true;
                 } else {
@@ -578,6 +599,7 @@ async function loadClusterData(marker, activeMembers) {
                 }
             }
         } catch (e) {
+            console.error(e);
             hasError = true;
         }
     });
@@ -628,7 +650,7 @@ async function loadClusterData(marker, activeMembers) {
 
     let linesHtml = allArrivals.map(arrival => {
         let isBus = arrival._parentType === 'bus';
-        let isTram = arrival._parentType === 'tram';
+        let isTram = (arrival._parentType === 'tram' || arrival._parentType === 'tram_alicante');
         let isMetrobus = arrival._parentType === 'metrobus';
         let isMetro = arrival._parentType === 'metro';
         
@@ -662,10 +684,15 @@ async function loadClusterData(marker, activeMembers) {
             if (match) displayEta = `${match[0]} min`;
         }
         
+        let displayLine = String(arrival.line);
+        if ((isMetro || isTram) && !displayLine.startsWith('L')) {
+            displayLine = 'L' + displayLine;
+        }
+        
         return `
-        <div class="arrival-item" onclick="drawRoute('${arrival.line}', '${arrival._parentType}', null, '${(arrival.destination || '').replace(/'/g, "\\'")}')" style="cursor: pointer;" title="Ver Ruta">
+        <div class="arrival-item" onclick="drawRoute('${arrival.line}', '${arrival._parentType}', '${arrival._originStopId}', '${(arrival.destination || '').replace(/'/g, "\\'")}', ${arrival._originLat}, ${arrival._originLng})" style="cursor: pointer;" title="Ver Ruta">
             <div class="arrival-left">
-                <span class="line-badge ${lineClass}" style="${badgeStyle}">${arrival.line}</span>
+                <span class="line-badge ${lineClass}" style="${badgeStyle}">${displayLine}</span>
                 ${arrival.destination ? `<span class="arrival-dest">${arrival.destination}</span>` : ''}
             </div>
             <span class="eta-time">${iconHtml}${displayEta}</span>
@@ -689,8 +716,9 @@ async function loadClusterData(marker, activeMembers) {
 }
 
 // Draw route function
-async function drawRoute(line, type, originStopId = null, destination = null) {
+async function drawRoute(line, type, originStopId = null, destination = null, originLat = null, originLng = null) {
     if (currentRouteLayer) map.removeLayer(currentRouteLayer);
+    if (currentBaseRouteLayer) map.removeLayer(currentBaseRouteLayer);
     if (routeStopsLayer) map.removeLayer(routeStopsLayer);
     map.removeLayer(markersLayer);
     
@@ -704,13 +732,13 @@ async function drawRoute(line, type, originStopId = null, destination = null) {
     statusText.style.color = '#3b82f6';
     
     try {
-        const url = `/api/line_geometry?line=${line}&type=${type}${destination ? '&destination=' + encodeURIComponent(destination) : ''}`;
+        const url = `/api/line_geometry?line=${line}&type=${type}${destination ? '&destination=' + encodeURIComponent(destination) : ''}${originStopId ? '&stop_id=' + encodeURIComponent(originStopId) : ''}`;
         const response = await fetch(url);
         const data = await response.json();
         
         if (!data.success) throw new Error(data.error || 'Failed to fetch route');
         
-        const isTram = type === 'tram';
+        const isTram = (type === 'tram' || type === 'tram_alicante');
         const isMetrobus = type === 'metrobus';
         const colorsMap = isTram ? tramColors : metroColors;
         let routeColor = '#ef4444';
@@ -718,22 +746,178 @@ async function drawRoute(line, type, originStopId = null, destination = null) {
         else if (type === 'metro') routeColor = colorsMap[line] || '#3b82f6';
         else if (isMetrobus) routeColor = '#FFB81C';
         
-        if (data.geometry) {
-            currentRouteLayer = L.geoJSON(data.geometry, {
-                style: { color: routeColor, weight: 4, opacity: 0.8 }
-            }).addTo(map);
-        } else {
-            const latlngs = data.ordered_stops.map(s => [s.lat, s.lng]);
-            currentRouteLayer = L.polyline(latlngs, {
-                color: routeColor,
-                weight: 4,
-                opacity: 0.8,
-                dashArray: '10, 10'
+        if (currentRouteLayer) map.removeLayer(currentRouteLayer);
+        if (currentBaseRouteLayer) map.removeLayer(currentBaseRouteLayer);
+        if (routeStopsLayer) map.removeLayer(routeStopsLayer);
+        
+        // 1. Draw base geometry (the full network) underneath if available
+        if (data.base_geometry) {
+            currentBaseRouteLayer = L.geoJSON(data.base_geometry, {
+                style: { color: routeColor, weight: 3, opacity: 0.8 }
             }).addTo(map);
         }
         
+        // 2. Slice the active route from origin to destination
+        let originStop = data.ordered_stops[0];
+        
+        // Filter ordered_stops to only show stops from origin onwards
+        if (originStopId) {
+            let originIdx = data.ordered_stops.findIndex(s => s.id == originStopId || (s.id && s.id.toString() === originStopId.toString()));
+            
+            // If the exact stop ID isn't in the sequence (common GTFS inconsistency), find the geographically closest stop
+            if (originIdx === -1 && typeof turf !== 'undefined') {
+                console.warn(`Origin stop ${originStopId} not in sequence, searching for geographically closest stop...`);
+                // Find coordinates of the missing origin stop from all_stops or parameters
+                const missingStop = (data.all_stops && data.all_stops.find(s => s.id == originStopId || (s.id && s.id.toString() === originStopId.toString())));
+                let originPt = null;
+                
+                if (missingStop) {
+                    originPt = turf.point([missingStop.lng, missingStop.lat]);
+                } else if (originLat !== null && originLat !== undefined && originLng !== null && originLng !== undefined) {
+                    originPt = turf.point([originLng, originLat]);
+                }
+                
+                if (originPt) {
+                    let minDistance = Infinity;
+                    let closestIdx = -1;
+                    
+                    for (let i = 0; i < data.ordered_stops.length; i++) {
+                        const s = data.ordered_stops[i];
+                        const d = turf.distance(originPt, turf.point([s.lng, s.lat]), {units: 'meters'});
+                        if (d < minDistance) {
+                            minDistance = d;
+                            closestIdx = i;
+                        }
+                    }
+                    
+                    if (closestIdx !== -1) {
+                        originIdx = closestIdx;
+                        console.log(`Snapped origin to closest stop in sequence: ${data.ordered_stops[originIdx].name} (${minDistance.toFixed(1)}m away)`);
+                        
+                        // Inject the missing stop into the sequence so it gets drawn and connected!
+                        if (originLat !== null && originLat !== undefined && originLng !== null && originLng !== undefined) {
+                            const stopName = missingStop ? missingStop.name : "Parada Seleccionada";
+                            data.ordered_stops.splice(originIdx, 0, {
+                                id: originStopId,
+                                name: stopName,
+                                lat: originLat,
+                                lng: originLng,
+                                type: type
+                            });
+                            // originIdx now points to the freshly injected stop
+                        }
+                    }
+                }
+            }
+            
+            if (originIdx !== -1) {
+                originStop = data.ordered_stops[originIdx];
+                data.ordered_stops = data.ordered_stops.slice(originIdx);
+            }
+        }
+        
+        if (data.ordered_stops && data.ordered_stops.length > 0) {
+            const lastStop = data.ordered_stops[data.ordered_stops.length - 1];
+            
+            // Try to slice the smooth GTFS geometry
+            if (data.geometry && typeof turf !== 'undefined' && data.geometry.type === 'LineString') {
+                try {
+                    const startPt = turf.point([originStop.lng, originStop.lat]);
+                    const endPt = turf.point([lastStop.lng, lastStop.lat]);
+                    data.geometry = turf.lineSlice(startPt, endPt, data.geometry);
+                        
+                        // Validate that the slice actually reached the destination
+                        const slicedCoords = data.geometry.geometry.coordinates;
+                        if (slicedCoords && slicedCoords.length > 0) {
+                            // Always perfectly snap the start of the line to the exact origin station center
+                            slicedCoords.unshift([originStop.lng, originStop.lat]);
+                            
+                            const sliceEnd = turf.point(slicedCoords[slicedCoords.length - 1]);
+                            const distanceToEnd = turf.distance(sliceEnd, endPt, {units: 'meters'});
+                            if (distanceToEnd > 150) {
+                                console.warn("GTFS geometry broken (didn't reach destination). Appending missing stops.");
+                                
+                                // Find the closest stop to where the broken geometry ended
+                                let closestStopIdx = -1;
+                                let minDistance = Infinity;
+                                for (let i = 0; i < data.ordered_stops.length; i++) {
+                                    const s = data.ordered_stops[i];
+                                    const d = turf.distance(sliceEnd, turf.point([s.lng, s.lat]), {units: 'meters'});
+                                    if (d < minDistance) {
+                                        minDistance = d;
+                                        closestStopIdx = i;
+                                    }
+                                }
+                                
+                                // Append the coordinates of all remaining stops to complete the line
+                                if (closestStopIdx !== -1 && closestStopIdx < data.ordered_stops.length - 1) {
+                                    for (let i = closestStopIdx + 1; i < data.ordered_stops.length; i++) {
+                                        const s = data.ordered_stops[i];
+                                        slicedCoords.push([s.lng, s.lat]);
+                                    }
+                                }
+                            }
+                            
+                            // Always perfectly snap the very end of the line to the exact destination station center
+                            slicedCoords.push([lastStop.lng, lastStop.lat]);
+                        }
+                    } catch (e) {
+                        console.warn("Could not slice smooth geometry, falling back to points", e);
+                        data.geometry = null; // Force fallback point-to-point drawing
+                    }
+                } else if (data.geometry && data.geometry.type !== 'LineString') {
+                    // If it's a MultiLineString, we cannot slice it easily with basic turf.lineSlice.
+                    data.geometry = null; // Force fallback to ensure it starts at origin
+                }
+        }
+        
+        // 3. Draw active geometry (the destination-specific route) on top
+        if (data.geometry) {
+            currentRouteLayer = L.geoJSON(data.geometry, {
+                style: { color: routeColor, weight: 6, opacity: 1.0 }
+            }).addTo(map);
+        } else if (data.ordered_stops && data.ordered_stops.length > 0) {
+            const latlngs = data.ordered_stops.map(s => [s.lat, s.lng]);
+            currentRouteLayer = L.polyline(latlngs, {
+                color: routeColor,
+                weight: 6,
+                opacity: 1.0,
+                lineJoin: 'round',
+                lineCap: 'round'
+            }).addTo(map);
+        }
+
+        // Removed automatic map.fitBounds so the user's zoom level is not overridden
+        
         routeStopsLayer = L.layerGroup().addTo(map);
         let originMarker = null;
+        
+        // Draw the base network stations first (small markers)
+        if (data.all_stops && type !== 'bus' && type !== 'metrobus') {
+            data.all_stops.forEach((stop) => {
+                const marker = L.circleMarker([stop.lat, stop.lng], {
+                    radius: 3,
+                    fillColor: '#ffffff',
+                    color: routeColor,
+                    weight: 1,
+                    fillOpacity: 0.5,
+                    opacity: 0.5
+                }).bindTooltip(`${stop.name}`);
+                
+                marker.bindPopup('', {
+                    className: 'custom-popup',
+                    closeButton: false,
+                    minWidth: 200
+                });
+                
+                marker.on('click', async (e) => {
+                    stop.type = type || 'bus'; 
+                    await loadStopData(marker, stop, line);
+                });
+                
+                routeStopsLayer.addLayer(marker);
+            });
+        }
         
         data.ordered_stops.forEach((stop, i) => {
             const isOrigin = originStopId && (stop.id == originStopId || stop.id == `metro-${originStopId}` || `metro-${stop.id}` == originStopId);
@@ -761,8 +945,7 @@ async function drawRoute(line, type, originStopId = null, destination = null) {
         });
         
         if (data.ordered_stops.length > 0) {
-            const bounds = L.latLngBounds(data.ordered_stops.map(s => [s.lat, s.lng]));
-            map.fitBounds(bounds, { padding: [50, 50] });
+            // Removed automatic map.fitBounds so the user's zoom level is not overridden
         }
         
         if (originMarker) {
@@ -777,7 +960,7 @@ async function drawRoute(line, type, originStopId = null, destination = null) {
         
     } catch (e) {
         console.error("Route error:", e);
-        statusText.innerText = `Error cargando ruta L${line}`;
+        statusText.innerText = `Error cargando ruta ${line}`;
         statusText.style.color = '#ef4444';
         map.addLayer(markersLayer);
         document.getElementById('map').classList.remove('route-mode-active');
@@ -1084,8 +1267,17 @@ function renderJourneyResults(routes) {
                     hasRealtime = true;
                 }
                 
+                const isTram = leg.type === 'tram' || leg.type === 'tram_alicante';
+                const isMetro = leg.type === 'metro';
+                
+                let agencyName = isBus ? 'EMT' : (isMetrobus ? 'Metrobús' : (isTram ? "TRAM d'Alacant" : 'Metrovalencia'));
+                let lineDisplay = String(leg.line);
+                if (!isBus && !isMetrobus && !lineDisplay.startsWith('L')) {
+                    lineDisplay = 'L' + lineDisplay;
+                }
+                
                 legsHtml += `<div class="route-leg">
-                    <span style="color:${badgeColor}">●</span> <span>Viajar en <span class="route-badge" style="background-color: ${badgeColor}; display:inline-block; margin: 0 4px">${leg.line}</span> durante ${leg.time} min hasta <b>${leg.dest_stop}</b>${etaInfo}</span>
+                    <span style="color:${badgeColor}">●</span> <span>Viajar en ${agencyName} <span class="route-badge" style="background-color: ${badgeColor}; display:inline-block; margin: 0 4px">${lineDisplay}</span> durante ${leg.time} min hasta <b>${leg.dest_stop}</b>${etaInfo}</span>
                 </div>`;
             }
         });
@@ -1120,39 +1312,110 @@ function renderJourneyResults(routes) {
             window.journeyMarkersLayer = journeyFeatureGroup;
             window.currentJourneyLayer = journeyFeatureGroup;
             
-            route.legs.forEach(leg => {
+            route.legs.forEach(async leg => {
                 if (leg.stops_coords && leg.stops_coords.length > 0) {
                     const isWalk = leg.type === 'walk';
                     const isBus = leg.type === 'bus';
                     const isMetrobus = leg.type === 'metrobus';
-                    const color = isWalk ? '#888' : (isBus ? '#ef4444' : (isMetrobus ? '#FFB81C' : '#3b82f6'));
+                    const isTram = leg.type === 'tram' || leg.type === 'tram_alicante';
+                    const isMetro = leg.type === 'metro';
                     
-                    // Draw Polyline connecting stops
-                    L.polyline(leg.stops_coords, {
-                        color: color,
-                        weight: isWalk ? 4 : 5,
-                        dashArray: isWalk ? '5, 10' : null,
-                        opacity: 0.8
-                    }).addTo(journeyFeatureGroup);
+                    let color = isWalk ? '#888' : '#ef4444';
+                    if (isTram) color = tramColors[leg.line] || '#f97316';
+                    else if (isMetro) color = metroColors[leg.line] || '#3b82f6';
+                    else if (isMetrobus) color = '#FFB81C';
+                    
+                    // Draw Polyline for walking, exact geometry for transit
+                    if (isWalk) {
+                        L.polyline(leg.stops_coords, {
+                            color: color,
+                            weight: 5,
+                            dashArray: '5, 10',
+                            opacity: 0.8
+                        }).addTo(journeyFeatureGroup);
+                    } else {
+                        try {
+                            const res = await fetch(`/api/line_geometry?line=${leg.line}&type=${leg.type}`);
+                            const data = await res.json();
+                            
+                            let drawn = false;
+                            if (data.success && data.geometry) {
+                                const startPt = turf.point([leg.stops_coords[0][1], leg.stops_coords[0][0]]);
+                                const endPt = turf.point([leg.stops_coords[leg.stops_coords.length - 1][1], leg.stops_coords[leg.stops_coords.length - 1][0]]);
+                                
+                                let bestSlice = null;
+                                let bestDist = Infinity;
+                                
+                                const linesToTest = data.geometry.type === 'MultiLineString' 
+                                    ? data.geometry.coordinates.map(c => turf.lineString(c)) 
+                                    : [turf.lineString(data.geometry.coordinates)];
+                                    
+                                linesToTest.forEach(line => {
+                                    try {
+                                        const startSnap = turf.nearestPointOnLine(line, startPt);
+                                        const endSnap = turf.nearestPointOnLine(line, endPt);
+                                        // Both points must be close to this shape variant (within 300 meters)
+                                        if (startSnap.properties.dist < 0.3 && endSnap.properties.dist < 0.3) {
+                                            const slice = turf.lineSlice(startSnap, endSnap, line);
+                                            // Prefer the shortest valid slice to avoid drawing huge roundabout loops
+                                            const d = turf.length(slice);
+                                            if (d < bestDist) {
+                                                bestDist = d;
+                                                bestSlice = slice;
+                                            }
+                                        }
+                                    } catch (e) {}
+                                });
+                                
+                                if (bestSlice) {
+                                    L.geoJSON(bestSlice, {
+                                        style: { color: color, weight: 5, opacity: 0.9 }
+                                    }).addTo(journeyFeatureGroup);
+                                    drawn = true;
+                                }
+                            }
+                            
+                            // Fallback to straight lines if geometry fails or slicing fails
+                            if (!drawn) {
+                                L.polyline(leg.stops_coords, {
+                                    color: color, weight: 5, opacity: 0.9
+                                }).addTo(journeyFeatureGroup);
+                            }
+                        } catch (e) {
+                            L.polyline(leg.stops_coords, { color: color, weight: 5, opacity: 0.9 }).addTo(journeyFeatureGroup);
+                        }
+                    }
                     
                     // Draw Markers for Stops (only for transit legs)
                     if (!isWalk && leg.stops_coords.length > 0) {
+                        const bindMarkerClick = (marker, stopName, stopId) => {
+                            if (!stopId) return; // Safety check
+                            marker.bindPopup('', { className: 'custom-popup', closeButton: false, minWidth: 200 });
+                            marker.on('click', async () => {
+                                map.setView(marker.getLatLng(), 18);
+                                await loadStopData(marker, {id: stopId, name: stopName, type: leg.type}, leg.line);
+                            });
+                        };
+
                         // Draw origin circle
-                        L.circleMarker(leg.stops_coords[0], {
-                            radius: 5, fillColor: '#fff', color: color, weight: 2, fillOpacity: 1
-                        }).bindPopup(`<b>Inicio de tramo</b><br>${leg.orig_stop || ''}<br>Línea ${leg.line}`).addTo(journeyFeatureGroup);
+                        const originMarker = L.circleMarker(leg.stops_coords[0], {
+                            radius: 6, fillColor: '#fff', color: color, weight: 3, fillOpacity: 1
+                        }).addTo(journeyFeatureGroup);
+                        bindMarkerClick(originMarker, leg.orig_stop || leg.stops_names[0], leg.stops_ids ? leg.stops_ids[0] : null);
                         
                         // Draw destination circle
-                        L.circleMarker(leg.stops_coords[leg.stops_coords.length - 1], {
-                            radius: 5, fillColor: '#fff', color: color, weight: 2, fillOpacity: 1
-                        }).bindPopup(`<b>Fin de tramo</b><br>${leg.dest_stop || ''}<br>Línea ${leg.line}`).addTo(journeyFeatureGroup);
+                        const destMarker = L.circleMarker(leg.stops_coords[leg.stops_coords.length - 1], {
+                            radius: 6, fillColor: '#fff', color: color, weight: 3, fillOpacity: 1
+                        }).addTo(journeyFeatureGroup);
+                        bindMarkerClick(destMarker, leg.dest_stop || leg.stops_names[leg.stops_names.length - 1], leg.stops_ids ? leg.stops_ids[leg.stops_ids.length - 1] : null);
                         
                         // Intermediate stops
                         if (leg.stops_names && leg.stops_names.length > 2) {
                             for (let i = 1; i < leg.stops_coords.length - 1; i++) {
-                                L.circleMarker(leg.stops_coords[i], {
-                                    radius: 3, fillColor: color, color: '#fff', weight: 1, fillOpacity: 1
-                                }).bindPopup(`<b>Parada</b><br>${leg.stops_names[i]}`).addTo(journeyFeatureGroup);
+                                const interMarker = L.circleMarker(leg.stops_coords[i], {
+                                    radius: 4, fillColor: color, color: '#fff', weight: 1, fillOpacity: 1
+                                }).addTo(journeyFeatureGroup);
+                                bindMarkerClick(interMarker, leg.stops_names[i], leg.stops_ids ? leg.stops_ids[i] : null);
                             }
                         }
                     }

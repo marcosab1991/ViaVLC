@@ -134,7 +134,7 @@ def fetch_metro_stops(c):
                 name_normalized = remove_accents(stop['name'].lower())
                 c.execute(
                     'INSERT OR REPLACE INTO stops (id, type, name, name_normalized, lat, lng, lines) VALUES (?, ?, ?, ?, ?, ?, ?)',
-                    (f"tram-{stop['id']}", 'tram', stop['name'], name_normalized, stop['location']['lat'], stop['location']['lng'], lines_json)
+                    (f"tram-{stop['id']}", 'tram_alicante', stop['name'], name_normalized, stop['location']['lat'], stop['location']['lng'], lines_json)
                 )
         print(f"Inserted {len(tram_stops)} TRAM d'Alacant stops into DB.")
     except Exception as e:

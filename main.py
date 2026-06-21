@@ -150,102 +150,198 @@ def nearest_neighbor_sort(stops):
     return ordered
 
 @app.get("/api/line_geometry")
-async def get_line_geometry(line: str, type: str = "bus", destination: str = ""):
+async def get_line_geometry(line: str, type: str = "bus", destination: str = "", stop_id: str = ""):
     """
     Offline geometry via lines.db (extracted from OSM).
     Matches the requested destination string to the closest OSM destination.
     """
     try:
-        # Step 1: Find best matching geometry from lines.db
-        geometry = None
-        
         db_line_ref = line
-        if type == "metro" and db_line_ref.startswith("L"):
+        if type in ["metro", "tram", "tram_alicante"] and db_line_ref.startswith("L"):
             db_line_ref = db_line_ref[1:]
             
-        async with aiosqlite.connect('lines.db') as db:
-            cursor = await db.execute('SELECT destination, geometry_json FROM routes WHERE ref=? AND type=?', (db_line_ref, type))
+        # Auto-correct type for FGV shared stops (e.g. Benimaclet passing type=metro for Tram 4)
+        if type in ["metro", "tram"]:
+            if str(db_line_ref) in ["4", "6", "8", "10", "11", "12"]: # Added Alicante trams
+                type = "tram"
+            else:
+                type = "metro"
+                
+        # Make sure STOPS_CACHE is loaded
+        if not STOPS_CACHE:
+            await build_graph()
+            
+        # Step 1: Exact ordered stops from line_routes matching the destination & stop_id
+        ordered_stops = []
+        best_stop_seq = []
+        best_stop_last_name = ""
+        
+        async with aiosqlite.connect('stops.db') as db:
+            # Check if geometry_json column exists, if so select it
+            try:
+                cursor = await db.execute("SELECT stops_json, geometry_json FROM line_routes WHERE line=? AND type=?", (db_line_ref, type))
+            except Exception:
+                cursor = await db.execute("SELECT stops_json, NULL FROM line_routes WHERE line=? AND type=?", (db_line_ref, type))
             rows = await cursor.fetchall()
             
-            # Fallback for Metrobus: API often returns base number (e.g. 145) but DB has variants (145A, 145B)
+            # Fallback for Metrobus (GTFS data uses 'L' prefix)
             if not rows and type == "metrobus" and db_line_ref:
-                base_ref = "".join([c for c in db_line_ref if c.isdigit()])
-                cursor = await db.execute('SELECT destination, geometry_json FROM routes WHERE ref LIKE ? AND type=?', (f"{base_ref}%", type))
+                base_line = "".join([c for c in db_line_ref if c.isdigit()])
+                cursor = await db.execute("SELECT stops_json, geometry_json FROM line_routes WHERE line LIKE ? AND type=?", (f"L{base_line}%", type))
                 rows = await cursor.fetchall()
                 
             if rows:
+                valid_rows = []
+                # Find the row that contains the originStopId in its sequence
+                if stop_id:
+                    for row in rows:
+                        seq = json.loads(row[0])
+                        if str(stop_id) in [str(x) for x in seq]:
+                            valid_rows.append(row)
+                
+                if not valid_rows:
+                    valid_rows = rows
+                
+                # Match destination string against the sequence to pick the correct direction and truncate if needed
                 if destination:
-                    best_geom = None
-                    highest_ratio = -1
-                    target_dest = remove_accents(destination.lower())
+                    best_ratio = -1
+                    best_rows = []
+                    import difflib
+                    for row in valid_rows:
+                        seq = json.loads(row[0])
+                        if not seq: continue
+                        
+                        # Check all intermediate stops and the last stop
+                        for i, sid in enumerate(seq):
+                            sid = str(sid)
+                            if sid in STOPS_CACHE:
+                                stop_name = STOPS_CACHE[sid]['name']
+                                ratio = difflib.SequenceMatcher(None, destination.lower(), stop_name.lower()).ratio()
+                                if destination.lower() in stop_name.lower() or stop_name.lower() in destination.lower():
+                                    ratio += 0.5
+                                
+                                # Check if the train is actually going in the right direction
+                                valid_dir = True
+                                if stop_id:
+                                    str_seq = [str(x) for x in seq]
+                                    if str(stop_id) in str_seq:
+                                        origin_idx = str_seq.index(str(stop_id))
+                                        if origin_idx > i:
+                                            valid_dir = False # Destination is BEFORE origin in this sequence!
+                                            
+                                if not valid_dir:
+                                    continue
+                                
+                                # If it's a strong match and in the right direction, truncate the sequence up to this stop
+                                if ratio > best_ratio:
+                                    best_ratio = ratio
+                                    truncated_seq = seq[:i+1]
+                                    best_rows = [(row, truncated_seq)]
+                                elif ratio == best_ratio:
+                                    truncated_seq = seq[:i+1]
+                                    best_rows.append((row, truncated_seq))
                     
-                    for row_dest, geom_json in rows:
-                        db_dest = remove_accents((row_dest or "").lower())
-                        ratio = difflib.SequenceMatcher(None, db_dest, target_dest).ratio()
-                        if ratio > highest_ratio:
-                            highest_ratio = ratio
-                            best_geom = geom_json
-                    
-                    if best_geom:
-                        geometry = json.loads(best_geom)
-                else:
-                    # Merge all geometries for this line to show all branches
-                    merged_coords = []
-                    for row_dest, geom_json in rows:
-                        try:
-                            geom = json.loads(geom_json)
-                            if geom.get("type") == "MultiLineString":
-                                merged_coords.extend(geom.get("coordinates", []))
-                            elif geom.get("type") == "LineString":
-                                merged_coords.append(geom.get("coordinates", []))
-                        except Exception:
-                            pass
-                    
-                    if merged_coords:
-                        geometry = {
-                            "type": "MultiLineString",
-                            "coordinates": merged_coords
-                        }
-        
-        # Step 2: Fallback ordered stops (if needed by frontend to draw points)
-        async with aiosqlite.connect('stops.db') as db:
-            search_line = line
-            if type in ['metro', 'tram'] and not search_line.startswith('L'):
-                search_line = f"L{search_line}"
+                    if best_rows and best_ratio > 0.4:
+                        valid_rows = []
+                        for r, truncated_seq in best_rows:
+                            new_row = list(r)
+                            new_row[0] = json.dumps(truncated_seq)
+                            valid_rows.append(tuple(new_row))
                 
-            cursor = await db.execute(
-                'SELECT id, name, lat, lng FROM stops WHERE type=? AND lines LIKE ? LIMIT 150',
-                (type, f'%"{search_line}"%')
-            )
-            rows = await cursor.fetchall()
-            
-            # Fallback for Metrobus stops: API often returns base number (e.g. 145) but DB has variants (145A)
-            if not rows and type == "metrobus" and line:
-                base_line = "".join([c for c in line if c.isdigit()])
-                cursor = await db.execute(
-                    'SELECT id, name, lat, lng FROM stops WHERE type=? AND lines LIKE ? LIMIT 150',
-                    (type, f'%"{base_line}%"%')
-                )
-                rows = await cursor.fetchall()
-                
-            raw_stops = []
-            for row in rows:
-                raw_stops.append({
-                    "id": str(row[0]),
-                    "name": row[1],
-                    "lat": row[2],
-                    "lng": row[3]
-                })
-            
-            # Since we have the exact geometry from OSM, we don't strictly need to order stops perfectly 
-            # for drawing the line anymore. But we return them ordered by Nearest Neighbor for the markers.
-            ordered_stops = nearest_neighbor_sort(raw_stops)
+                # Sort valid_rows by the length of the stops sequence to prefer the longest/most complete route
 
-        return {
-            "success": True, 
-            "geometry": geometry,
-            "ordered_stops": ordered_stops
-        }
+                valid_rows.sort(key=lambda r: len(json.loads(r[0])), reverse=True)
+                
+                # Assume the first valid sequence is correct if we can't narrow it down further
+                best_stop_seq = json.loads(valid_rows[0][0])
+                
+                geom_json_from_db = None
+                base_geom_json = None
+                
+                if type in ['metro', 'tram', 'tram_alicante']:
+                    # Combine ALL geometries for this line into a single MultiLineString for the base layer
+                    multi_coords = []
+                    for row in rows:
+                        if len(row) > 1 and row[1]:
+                            geom = json.loads(row[1])
+                            coords = geom.get('coordinates', [])
+                            if coords:
+                                if geom.get('type') == 'MultiLineString':
+                                    multi_coords.extend(coords)
+                                else:
+                                    multi_coords.append(coords)
+                    
+                    if multi_coords:
+                        base_geom_json = json.dumps({
+                            'type': 'MultiLineString',
+                            'coordinates': multi_coords
+                        })
+                    
+                    # The active geometry is the specific row matching the destination
+                    if len(valid_rows[0]) > 1 and valid_rows[0][1]:
+                        geom_json_from_db = valid_rows[0][1]
+                else:
+                    # For buses, we only draw the active geometry (no base layer)
+                    if len(valid_rows[0]) > 1 and valid_rows[0][1]:
+                        geom_json_from_db = valid_rows[0][1]
+                    
+                # Get the name of the last stop for the difflib fallback
+                best_stop_last_name = None
+                if best_stop_seq:
+                    last_stop_id = str(best_stop_seq[-1])
+                    if last_stop_id in STOPS_CACHE:
+                        best_stop_last_name = STOPS_CACHE[last_stop_id]['name']
+
+                ordered_stops_data = []
+                for sid in best_stop_seq:
+                    sid = str(sid)
+                    if sid in STOPS_CACHE:
+                        s = STOPS_CACHE[sid]
+                        ordered_stops_data.append({
+                            "id": sid,
+                            "name": s['name'],
+                            "lat": s['lat'],
+                            "lng": s['lng']
+                        })
+                        
+                all_stops_data = []
+                seen_sids = set()
+                for row in rows:
+                    seq = json.loads(row[0])
+                    for sid in seq:
+                        sid = str(sid)
+                        if sid not in seen_sids and sid in STOPS_CACHE:
+                            seen_sids.add(sid)
+                            s = STOPS_CACHE[sid]
+                            all_stops_data.append({
+                                "id": sid,
+                                "name": s['name'],
+                                "lat": s['lat'],
+                                "lng": s['lng'],
+                                "type": s['type']
+                            })
+                        
+                # If active geometry is missing (e.g. injected branches like Mas del Rosari), generate point-to-point fallback
+                if not geom_json_from_db and ordered_stops_data and type in ['metro', 'tram', 'tram_alicante']:
+                    fallback_coords = [[s['lng'], s['lat']] for s in ordered_stops_data]
+                    geom_json_from_db = json.dumps({
+                        'type': 'LineString',
+                        'coordinates': fallback_coords
+                    })
+                        
+                # If we have GTFS geometry, return it immediately!
+                if geom_json_from_db or base_geom_json:
+                    return {
+                        "success": True, 
+                        "geometry": json.loads(geom_json_from_db) if geom_json_from_db else None,
+                        "base_geometry": json.loads(base_geom_json) if base_geom_json else None,
+                        "ordered_stops": ordered_stops_data,
+                        "all_stops": all_stops_data
+                    }
+                else:
+                    return {"success": True, "geometry": None, "ordered_stops": ordered_stops_data, "all_stops": all_stops_data, "error": "Geometría no disponible para esta ruta"}
+                    
+        return {"success": False, "error": "Route not found in db"}
             
     except Exception as e:
         import traceback
@@ -258,39 +354,62 @@ async def fetch_fgv_eta(stop_id: str, city_code: str, prefix: str):
     lat = None
     lng = None
     
-    # Query stops.db for lat/lng of this stop
+    # Query stops.db for lat/lng and lines of this stop
     import aiosqlite
+    db_name = ""
+    valid_lines = set()
     try:
         async with aiosqlite.connect('stops.db') as db:
-            cursor = await db.execute("SELECT lat, lng FROM stops WHERE id = ?", (f"{prefix}{clean_id}",))
+            cursor = await db.execute("SELECT lat, lng, name, lines FROM stops WHERE id = ?", (f"{prefix}{clean_id}",))
             row = await cursor.fetchone()
             if row:
-                lat, lng = row
+                lat, lng, db_name, lines_str = row
+                if lines_str and lines_str != "[]":
+                    import json
+                    valid_lines = set(json.loads(lines_str))
     except Exception as e:
-        print(f"Error querying lat/lng for {stop_id}: {e}")
+        print(f"Error querying DB for {stop_id}: {e}")
         
     arrivals_set = set()
     arrivals = []
     
     def add_previsiones(previsiones):
+        # CRITICAL FIX: The FGV backend has a bug where requesting an invalid/offline
+        # station ID will return the schedules for Luceros instead of empty!
+        # If the response contains lines that we KNOW do not pass through this station,
+        # the entire response is ghost data. Reject the whole thing to trigger fallback.
+        has_invalid_lines = False
+        if valid_lines:
+            for p in previsiones:
+                line_name = f"L{p.get('line')}"
+                if line_name not in valid_lines:
+                    has_invalid_lines = True
+                    break
+        
+        if has_invalid_lines:
+            return False
+            
         for p in previsiones:
             line_name = f"L{p.get('line')}"
             for t in p.get('trains', []):
                 seconds = t.get('seconds', 0)
                 minutos = seconds // 60
-                eta_str = "Próximo" if minutos == 0 else f"{minutos} min"
-                dest = t.get('destino')
                 
-                # Deduplicate based on line, destination, and roughly the same time
-                sig = f"{line_name}_{dest}_{minutos}"
+                eta_str = f"{minutos} min" if minutos > 0 else "Próximo"
+                
+                dest = t.get('destino')
+                sig = f"{line_name}_{dest}_{eta_str}"
+                
                 if sig not in arrivals_set:
                     arrivals_set.add(sig)
                     arrivals.append({
                         "line": line_name,
                         "destination": dest,
                         "eta": eta_str,
-                        "seconds": seconds
+                        "realtime": True,
+                        "_seconds": seconds
                     })
+        return True
 
     true_fgv_id = clean_id
     connector = aiohttp.TCPConnector(ssl=False)
@@ -307,31 +426,52 @@ async def fetch_fgv_eta(stop_id: str, city_code: str, prefix: str):
                     if not isinstance(res, list): res = [res]
                     
                     if res:
-                        # Find the closest station to avoid merging nearby stations
-                        closest_station = min(res, key=lambda x: x.get('estacion', {}).get('distancia_actual', 9999))
-                        dist = closest_station.get('estacion', {}).get('distancia_actual', 9999)
+                        # Find the best station by combining distance and name similarity
+                        best_station = None
+                        best_score = -99999
                         
-                        # Dynamically discover the true FGV API ID!
-                        discovered_id = closest_station.get('estacion', {}).get('estacion_id_FGV')
-                        if discovered_id:
-                            true_fgv_id = str(discovered_id)
+                        import difflib
+                        for r in res:
+                            api_name = r.get('estacion', {}).get('nombre', '')
+                            d = r.get('estacion', {}).get('distancia_actual', 9999)
                             
-                        if dist <= 150:
-                            add_previsiones(closest_station.get('previsiones', []))
+                            name_ratio = difflib.SequenceMatcher(None, db_name.lower(), api_name.lower()).ratio() if db_name else 0
+                            
+                            # If name matches well (>0.8), allow larger distance offsets up to 1000m
+                            # Otherwise require strict distance (<150m) to avoid merging separate stations
+                            score = -99999
+                            if name_ratio > 0.8 and d <= 1000:
+                                score = 1000 * name_ratio - d
+                            elif d <= 150:
+                                score = 500 - d
+                                
+                            if score > best_score:
+                                best_score = score
+                                best_station = r
+                        
+                        if best_station and best_score > -9999:
+                            discovered_id = best_station.get('estacion', {}).get('estacion_id_FGV')
+                            if discovered_id:
+                                true_fgv_id = str(discovered_id)
+                                
+                            add_previsiones(best_station.get('previsiones', []))
             except Exception as e:
                 last_error = e
                 print(f"Error in cercanos: {e}")
 
-        # Also try horarios-prevision-3 as fallback
-        url_prevision = f'https://www.fgv.es/fgv/app/es/api/v1/{city_code}/horarios-prevision-3/{true_fgv_id}'
-        try:
-            async with session.get(url_prevision, headers={'User-Agent': 'okhttp/4.10.0', 'Accept': 'application/json'}, timeout=10) as response:
-                text = await response.text()
-                res = json.loads(text)
-                add_previsiones(res.get('previsiones', []))
-        except Exception as e:
-            last_error = e
-            print(f"Error in prevision: {e}")
+        # Also try horarios-prevision-3 as fallback, but ONLY if we didn't already successfully hit cercanos
+        # For Alicante (A), ID mapping is messy and horarios-prevision-3 returns Luceros for missing stations!
+        # So skip it if we already found the station in cercanos.
+        if not (city_code == "A" and lat and lng):
+            url_prevision = f'https://www.fgv.es/fgv/app/es/api/v1/{city_code}/horarios-prevision-3/{true_fgv_id}'
+            try:
+                async with session.get(url_prevision, headers={'User-Agent': 'okhttp/4.10.0', 'Accept': 'application/json'}, timeout=10) as response:
+                    text = await response.text()
+                    res = json.loads(text)
+                    add_previsiones(res.get('previsiones', []))
+            except Exception as e:
+                last_error = e
+                print(f"Error in prevision: {e}")
 
         # Ultimate fallback: scrape WordPress admin-ajax if both APIs failed
         if not arrivals:
@@ -606,7 +746,9 @@ async def get_eta(id: str, type: str, response: Response = None):
         elif type == "metro":
             arrivals = await fetch_metro_eta(id)
         elif type == "tram":
-            arrivals = await fetch_tram_eta(id)
+            arrivals = await fetch_fgv_eta(id, "A", "tram-")
+        elif type == "tram_alicante":
+            arrivals = await fetch_fgv_eta(id, "A", "tram_alicante-")
         elif type == "metrobus":
             arrivals = await fetch_metrobus_eta(id)
         else:
@@ -765,164 +907,192 @@ async def get_journey(orig_lat: float, orig_lng: float, dest_lat: float, dest_ln
     disabled_lines = set()
     best_overall_route = None
     
-    for retry in range(10):
-        pq = []
-        for sid, w in orig_stops:
-            heapq.heappush(pq, (w, sid, [(sid, w, 'walk', 'walk', 'walk', None)]))
-            
-        visited = {}
-        best_path = None
-        best_weight = float('inf')
+    for master_retry in range(5):
+        k_paths = []
+        penalized_lines = {}
         
-        while pq:
-            curr_w, u, path = heapq.heappop(pq)
-            if curr_w >= best_weight: continue
-            if u in visited and visited[u] <= curr_w: continue
-            visited[u] = curr_w
-            
-            if u in dest_stops:
-                final_w = curr_w + dest_stops[u]
-                if final_w < best_weight:
-                    best_weight = final_w
-                    best_path = path + [('DEST', dest_stops[u], 'walk', 'walk', 'walk', None)]
-                    
-            for v, w_edge, edge_type, ref, ttype, rid in TRANSIT_GRAPH.get(u, []):
-                if edge_type == 'transit' and (ref, ttype) in disabled_lines:
-                    continue
+        for k in range(3):
+            pq = []
+            for sid, w in orig_stops:
+                heapq.heappush(pq, (w, sid, [(sid, w, 'walk', 'walk', 'walk', None)]))
                 
-                new_w = curr_w + w_edge
-                if edge_type == 'transit' and path:
-                    prev_edge_type = path[-1][2]
-                    prev_ref = path[-1][3]
-                    if prev_edge_type == 'transit' and prev_ref != ref:
-                        new_w += 5.0 # 5 min penalty
+            visited = {}
+            best_path = None
+            best_weight = float('inf')
+            
+            while pq:
+                curr_w, u, path = heapq.heappop(pq)
+                if curr_w >= best_weight: continue
+                if u in visited and visited[u] <= curr_w: continue
+                visited[u] = curr_w
+                
+                if u in dest_stops:
+                    final_w = curr_w + dest_stops[u]
+                    if final_w < best_weight:
+                        best_weight = final_w
+                        best_path = path + [('DEST', dest_stops[u], 'walk', 'walk', 'walk', None)]
                         
-                if new_w < best_weight:
-                    heapq.heappush(pq, (new_w, v, path + [(v, w_edge, edge_type, ref, ttype, rid)]))
+                for v, w_edge, edge_type, ref, ttype, rid in TRANSIT_GRAPH.get(u, []):
+                    if edge_type == 'transit' and (ref, ttype) in disabled_lines:
+                        continue
                     
-        if not best_path:
-            break
-            
-        legs = []
-        first_stop = best_path[0][0]
-        legs.append({
-            'type': 'walk',
-            'time': round(best_path[0][1]),
-            'orig_lat': orig_lat, 'orig_lng': orig_lng,
-            'dest_stop': STOPS_CACHE[first_stop]['name'],
-            'stops_coords': [[orig_lat, orig_lng], [STOPS_CACHE[first_stop]['lat'], STOPS_CACHE[first_stop]['lng']]]
-        })
-        current_leg = None
-        route_ids_used = set()
-        
-        for i in range(1, len(best_path)):
-            node, w_edge, edge_type, ref, ttype, rid = best_path[i]
-            prev_node = best_path[i-1][0]
-            
-            if node == 'DEST':
-                if current_leg: legs.append(current_leg)
-                legs.append({
-                    'type': 'walk',
-                    'time': round(w_edge),
-                    'orig_stop': STOPS_CACHE[prev_node]['name'],
-                    'dest_lat': dest_lat, 'dest_lng': dest_lng,
-                    'stops_coords': [[STOPS_CACHE[prev_node]['lat'], STOPS_CACHE[prev_node]['lng']], [dest_lat, dest_lng]]
-                })
+                    new_w = curr_w + w_edge
+                    if edge_type == 'transit':
+                        penalty = penalized_lines.get((ref, ttype), 0)
+                        new_w += penalty
+                        
+                    if edge_type == 'transit' and path:
+                        prev_edge_type = path[-1][2]
+                        prev_ref = path[-1][3]
+                        if prev_edge_type == 'transit' and prev_ref != ref:
+                            new_w += 5.0 # 5 min penalty
+                            
+                    if new_w < best_weight:
+                        heapq.heappush(pq, (new_w, v, path + [(v, w_edge, edge_type, ref, ttype, rid)]))
+                        
+            if not best_path:
                 break
                 
-            if edge_type == 'walk' or edge_type == 'transfer':
-                if current_leg: 
-                    legs.append(current_leg)
-                    current_leg = None
-                legs.append({
-                    'type': 'walk',
-                    'time': round(w_edge),
-                    'orig_stop': STOPS_CACHE[prev_node]['name'],
-                    'dest_stop': STOPS_CACHE[node]['name'],
-                    'stops_coords': [[STOPS_CACHE[prev_node]['lat'], STOPS_CACHE[prev_node]['lng']], [STOPS_CACHE[node]['lat'], STOPS_CACHE[node]['lng']]]
-                })
-            else:
-                if rid: route_ids_used.add(rid)
-                if not current_leg or current_leg['line'] != ref:
+            legs = []
+            first_stop = best_path[0][0]
+            legs.append({
+                'type': 'walk',
+                'time': round(best_path[0][1]),
+                'orig_lat': orig_lat, 'orig_lng': orig_lng,
+                'dest_stop': STOPS_CACHE[first_stop]['name'],
+                'stops_coords': [[orig_lat, orig_lng], [STOPS_CACHE[first_stop]['lat'], STOPS_CACHE[first_stop]['lng']]]
+            })
+            current_leg = None
+            route_ids_used = set()
+            transit_lines_in_path = set()
+            
+            for i in range(1, len(best_path)):
+                node, w_edge, edge_type, ref, ttype, rid = best_path[i]
+                prev_node = best_path[i-1][0]
+                
+                if node == 'DEST':
                     if current_leg: legs.append(current_leg)
-                    current_leg = {
-                        'type': ttype,
-                        'line': ref,
-                        'orig_id': prev_node,
+                    legs.append({
+                        'type': 'walk',
+                        'time': round(w_edge),
+                        'orig_stop': STOPS_CACHE[prev_node]['name'],
+                        'dest_lat': dest_lat, 'dest_lng': dest_lng,
+                        'stops_coords': [[STOPS_CACHE[prev_node]['lat'], STOPS_CACHE[prev_node]['lng']], [dest_lat, dest_lng]]
+                    })
+                    break
+                    
+                if edge_type == 'walk' or edge_type == 'transfer':
+                    if current_leg: 
+                        legs.append(current_leg)
+                        current_leg = None
+                    legs.append({
+                        'type': 'walk',
+                        'time': round(w_edge),
                         'orig_stop': STOPS_CACHE[prev_node]['name'],
                         'dest_stop': STOPS_CACHE[node]['name'],
-                        'time': w_edge,
-                        'stops_coords': [
-                            [STOPS_CACHE[prev_node]['lat'], STOPS_CACHE[prev_node]['lng']],
-                            [STOPS_CACHE[node]['lat'], STOPS_CACHE[node]['lng']]
-                        ],
-                        'stops_names': [
-                            STOPS_CACHE[prev_node]['name'],
-                            STOPS_CACHE[node]['name']
-                        ]
-                    }
+                        'stops_coords': [[STOPS_CACHE[prev_node]['lat'], STOPS_CACHE[prev_node]['lng']], [STOPS_CACHE[node]['lat'], STOPS_CACHE[node]['lng']]]
+                    })
                 else:
-                    current_leg['dest_stop'] = STOPS_CACHE[node]['name']
-                    current_leg['time'] += w_edge
-                    current_leg['stops_coords'].append([STOPS_CACHE[node]['lat'], STOPS_CACHE[node]['lng']])
-                    current_leg['stops_names'].append(STOPS_CACHE[node]['name'])
-                    
-        for leg in legs:
-            if 'time' in leg:
-                leg['time'] = round(leg['time'])
-                
-        # Fetch ETA for all transit legs concurrently
-        transit_legs = [(i, l) for i, l in enumerate(legs) if l['type'] not in ['walk']]
-        pruned_any = False
-        
-        async def fetch_raw_etas(leg):
-            try:
-                eta_res = await asyncio.wait_for(get_eta(leg['orig_id'], leg['type']), timeout=10.0)
-                if eta_res.get('success'):
-                    def match_line(api_line, graph_line):
-                        a = str(api_line).lstrip('L').lower()
-                        b = str(graph_line).lstrip('L').lower()
-                        return a == b
+                    if rid: route_ids_used.add(rid)
+                    transit_lines_in_path.add((ref, ttype))
+                    if not current_leg or current_leg['line'] != ref:
+                        if current_leg: legs.append(current_leg)
+                        current_leg = {
+                            'type': ttype,
+                            'line': ref,
+                            'orig_id': prev_node,
+                            'orig_stop': STOPS_CACHE[prev_node]['name'],
+                            'dest_stop': STOPS_CACHE[node]['name'],
+                            'time': w_edge,
+                            'stops_coords': [
+                                [STOPS_CACHE[prev_node]['lat'], STOPS_CACHE[prev_node]['lng']],
+                                [STOPS_CACHE[node]['lat'], STOPS_CACHE[node]['lng']]
+                            ],
+                            'stops_names': [
+                                STOPS_CACHE[prev_node]['name'],
+                                STOPS_CACHE[node]['name']
+                            ],
+                            'stops_ids': [
+                                prev_node,
+                                node
+                            ]
+                        }
+                    else:
+                        current_leg['dest_stop'] = STOPS_CACHE[node]['name']
+                        current_leg['time'] += w_edge
+                        current_leg['stops_coords'].append([STOPS_CACHE[node]['lat'], STOPS_CACHE[node]['lng']])
+                        current_leg['stops_names'].append(STOPS_CACHE[node]['name'])
+                        current_leg['stops_ids'].append(node)
                         
-                    etas = [e for e in eta_res['data'] if match_line(e.get('line'), leg['line'])]
-                    return etas
+            for leg in legs:
+                if 'time' in leg:
+                    leg['time'] = round(leg['time'])
+                    
+            k_paths.append({"legs": legs, "route_ids": list(route_ids_used)})
+            
+            # Penalize lines used to force diversity in the next iteration
+            for line, ttype in transit_lines_in_path:
+                penalized_lines[(line, ttype)] = penalized_lines.get((line, ttype), 0) + 20.0
+                
+        if not k_paths:
+            break
+            
+        async def fetch_raw_etas(orig_id, ltype):
+            try:
+                eta_res = await asyncio.wait_for(get_eta(orig_id, ltype), timeout=10.0)
+                if eta_res.get('success'):
+                    return eta_res['data']
                 return None
             except Exception:
                 return None
-
-        if transit_legs:
-            raw_eta_results = await asyncio.gather(*(fetch_raw_etas(l) for _, l in transit_legs))
-            eta_map = {l['orig_id']: res for (_, l), res in zip(transit_legs, raw_eta_results)}
+                
+        # Collect unique transit legs across all paths for batch ETA fetching
+        unique_stops = {}
+        for path in k_paths:
+            for leg in path['legs']:
+                if leg['type'] != 'walk':
+                    unique_stops[(leg['orig_id'], leg['type'])] = None
+                    
+        if unique_stops:
+            stop_keys = list(unique_stops.keys())
+            raw_eta_results = await asyncio.gather(*(fetch_raw_etas(sid, ltype) for sid, ltype in stop_keys))
+            unique_stops = {k: res for k, res in zip(stop_keys, raw_eta_results)}
             
+        pruned_any = False
+        valid_paths = []
+        
+        for path in k_paths:
+            legs = path['legs']
             cumulative_time = 0
+            path_pruned = False
+            
             for leg in legs:
                 if leg['type'] == 'walk':
                     cumulative_time += leg['time']
                 else:
-                    etas = eta_map.get(leg['orig_id'])
-                    
-                    if etas is None:
-                        # API explicitly failed (e.g. Timeout/Cloudflare). Fallback to 0 wait.
+                    raw_etas = unique_stops.get((leg['orig_id'], leg['type']))
+                    if raw_etas is None:
                         leg['wait_time'] = 0
                         leg['live_eta'] = "N/A"
                         cumulative_time += leg['time']
                         continue
                         
+                    def match_line(api_line, graph_line):
+                        return str(api_line).lstrip('L').lower() == str(graph_line).lstrip('L').lower()
+                        
+                    etas = [e for e in raw_etas if match_line(e.get('line'), leg['line'])]
+                        
                     if not etas:
-                        # API succeeded but line has no ETAs -> Line is dead!
                         disabled_lines.add((leg['line'], leg['type']))
+                        path_pruned = True
                         pruned_any = True
                         break
                         
-                    # Find first bus/train that departs AFTER we arrive at the stop
                     best_wait = float('inf')
                     best_eta = None
-                    
                     for e in etas:
                         eta_mins = parse_time_str(e.get('eta'))
                         if eta_mins == float('inf'): continue
-                        
-                        # Can we catch this vehicle?
                         if eta_mins >= cumulative_time:
                             wait = eta_mins - cumulative_time
                             if wait < best_wait:
@@ -930,29 +1100,30 @@ async def get_journey(orig_lat: float, orig_lng: float, dest_lat: float, dest_ln
                                 best_eta = e.get('eta')
                                 
                     if best_eta is None:
-                        # We missed all listed vehicles (e.g. they arrive before we get there)
-                        # We shouldn't prune the route because more will come later.
-                        # Fallback to an average wait (10 mins)
                         best_wait = 10
                         best_eta = "N/A"
                         
                     if best_wait > 90:
-                        # Wait time is absurd, consider it dead
                         disabled_lines.add((leg['line'], leg['type']))
+                        path_pruned = True
                         pruned_any = True
                         break
                         
                     leg['wait_time'] = best_wait
                     leg['live_eta'] = best_eta
-                    # Do NOT modify leg['time'] here, otherwise the frontend shows 'Viajar durante 38 min' 
-                    # and double-counts totalMins!
                     cumulative_time += (leg['time'] + best_wait)
                     
-        if pruned_any:
-            continue
+            if not path_pruned:
+                path['total_time'] = cumulative_time
+                valid_paths.append(path)
                 
-        best_overall_route = {"legs": legs, "route_ids": list(route_ids_used)}
-        break
+        if pruned_any and not valid_paths:
+            continue
+            
+        if valid_paths:
+            valid_paths.sort(key=lambda x: x['total_time'])
+            best_overall_route = valid_paths[0]
+            break
         
     if not best_overall_route:
         return {"success": True, "routes": []}
@@ -966,7 +1137,14 @@ async def get_journey(orig_lat: float, orig_lng: float, dest_lat: float, dest_ln
             if leg['time'] > 0 or leg['type'] != 'walk': 
                 clean_legs.append(leg)
 
-    return {"success": True, "routes": [{"legs": clean_legs, "route_ids": best_overall_route['route_ids']}]}
+    return {
+        "success": True, 
+        "routes": [{
+            "legs": clean_legs, 
+            "route_ids": best_overall_route['route_ids'],
+            "total_time": best_overall_route.get('total_time')
+        }]
+    }
 
 # Serve static files
 app.mount("/css", StaticFiles(directory="static/css"), name="css")

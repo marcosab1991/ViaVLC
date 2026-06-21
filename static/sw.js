@@ -1,4 +1,4 @@
-const CACHE_NAME = 'viavlc-cache-v6';
+const CACHE_NAME = 'valencia-transit-v11';
 const urlsToCache = [
   '/',
   '/css/style.css',
@@ -10,6 +10,7 @@ const urlsToCache = [
 ];
 
 self.addEventListener('install', event => {
+  self.skipWaiting();
   event.waitUntil(
     caches.open(CACHE_NAME)
       .then(cache => {
@@ -68,4 +69,5 @@ self.addEventListener('activate', event => {
       );
     })
   );
+  self.clients.claim();
 });
