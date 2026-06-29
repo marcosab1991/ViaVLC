@@ -27,6 +27,13 @@ def remove_accents(input_str):
     nfkd_form = unicodedata.normalize('NFKD', input_str)
     return "".join([c for c in nfkd_form if not unicodedata.combining(c)]).lower()
 
+def haversine_distance(lat1, lon1, lat2, lon2):
+    R = 6371000
+    phi1, phi2 = math.radians(lat1), math.radians(lat2)
+    dphi, dlambda = math.radians(lat2 - lat1), math.radians(lon2 - lon1)
+    a = math.sin(dphi/2.0)**2 + math.cos(phi1)*math.cos(phi2)*math.sin(dlambda/2.0)**2
+    return 2 * R * math.atan2(math.sqrt(a), math.sqrt(1-a))
+
 app = FastAPI(title="ViaVLC API")
 
 try:
@@ -192,12 +199,35 @@ async def get_line_geometry(line: str, type: str = "bus", destination: str = "",
                 
             if rows:
                 valid_rows = []
-                # Find the row that contains the originStopId in its sequence
+                # Find the row that contains the originStopId in its sequence (or is geographically very close)
                 if stop_id:
+                    origin_lat, origin_lng = None, None
+                    if str(stop_id) in STOPS_CACHE:
+                        origin_lat = STOPS_CACHE[str(stop_id)]['lat']
+                        origin_lng = STOPS_CACHE[str(stop_id)]['lng']
+                        print(f"DEBUG: origin {stop_id} coords: {origin_lat}, {origin_lng}", flush=True)
+                        
                     for row in rows:
                         seq = json.loads(row[0])
-                        if str(stop_id) in [str(x) for x in seq]:
+                        str_seq = [str(x) for x in seq]
+                        if str(stop_id) in str_seq:
+                            print(f"DEBUG: exact match", flush=True)
                             valid_rows.append(row)
+                        elif origin_lat is not None and origin_lng is not None:
+                            # Geographic fallback: if the stop is within 400m of any stop in the sequence
+                            found_close = False
+                            for sid in str_seq:
+                                if sid in STOPS_CACHE:
+                                    s_lat = STOPS_CACHE[sid]['lat']
+                                    s_lng = STOPS_CACHE[sid]['lng']
+                                    if haversine_distance(origin_lat, origin_lng, s_lat, s_lng) < 400:
+                                        print(f"DEBUG: geographic match on stop {sid} ({haversine_distance(origin_lat, origin_lng, s_lat, s_lng):.1f}m away)", flush=True)
+                                        found_close = True
+                                        break
+                            if found_close:
+                                valid_rows.append(row)
+                                
+                    print(f"DEBUG: valid_rows length: {len(valid_rows)}", flush=True)
                 
                 if not valid_rows:
                     valid_rows = rows
@@ -220,14 +250,31 @@ async def get_line_geometry(line: str, type: str = "bus", destination: str = "",
                                 if destination.lower() in stop_name.lower() or stop_name.lower() in destination.lower():
                                     ratio += 0.5
                                 
+                                # Bonus for matching near the terminus of the route
+                                if i >= len(seq) - 3:
+                                    ratio += 1.0
+                                
                                 # Check if the train is actually going in the right direction
                                 valid_dir = True
                                 if stop_id:
                                     str_seq = [str(x) for x in seq]
+                                    origin_idx = -1
                                     if str(stop_id) in str_seq:
                                         origin_idx = str_seq.index(str(stop_id))
-                                        if origin_idx > i:
-                                            valid_dir = False # Destination is BEFORE origin in this sequence!
+                                    elif origin_lat is not None and origin_lng is not None:
+                                        # Use the geographically closest stop in this sequence as the origin
+                                        min_dist = 400
+                                        for idx, sid in enumerate(str_seq):
+                                            if sid in STOPS_CACHE:
+                                                s_lat = STOPS_CACHE[sid]['lat']
+                                                s_lng = STOPS_CACHE[sid]['lng']
+                                                dist = haversine_distance(origin_lat, origin_lng, s_lat, s_lng)
+                                                if dist < min_dist:
+                                                    min_dist = dist
+                                                    origin_idx = idx
+                                    
+                                    if origin_idx != -1 and origin_idx > i:
+                                        valid_dir = False # Destination is BEFORE origin in this sequence!
                                             
                                 if not valid_dir:
                                     continue

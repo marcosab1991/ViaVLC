@@ -299,7 +299,9 @@ if ("geolocation" in navigator) {
             }
         },
         function(error) {
-            console.warn("Geolocation error:", error.message);
+            if (!error.message.includes("secure origins")) {
+                console.warn("Geolocation error:", error.message);
+            }
             if (isFirstLocation) fetchStopsInView(); // Fallback
         },
         {
