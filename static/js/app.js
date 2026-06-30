@@ -1206,7 +1206,8 @@ journeySearchBtn.addEventListener('click', async () => {
         const data = await res.json();
         
         if (!data.success || !data.routes || data.routes.length === 0) {
-            journeyResultsDiv.innerHTML = '<div class="error-msg">Ninguna ruta directa encontrada en un radio de 600m.</div>';
+            let msg = data.error || 'Ninguna ruta activa encontrada en este momento.';
+            journeyResultsDiv.innerHTML = `<div class="error-msg" style="padding:15px;text-align:center;">${msg}</div>`;
             return;
         }
         
@@ -1222,6 +1223,23 @@ journeySearchBtn.addEventListener('click', async () => {
     }
 });
 
+
+// Decode polyline (Google polyline algorithm)
+function decodePolyline(str, precision) {
+    var index = 0, lat = 0, lng = 0, coordinates = [], shift = 0, result = 0, byte = null, latitude_change, longitude_change, factor = Math.pow(10, Number.isInteger(precision) ? precision : 5);
+    while (index < str.length) {
+        byte = null; shift = 0; result = 0;
+        do { byte = str.charCodeAt(index++) - 63; result |= (byte & 0x1f) << shift; shift += 5; } while (byte >= 0x20);
+        latitude_change = ((result & 1) ? ~(result >> 1) : (result >> 1));
+        shift = result = 0;
+        do { byte = str.charCodeAt(index++) - 63; result |= (byte & 0x1f) << shift; shift += 5; } while (byte >= 0x20);
+        longitude_change = ((result & 1) ? ~(result >> 1) : (result >> 1));
+        lat += latitude_change; lng += longitude_change;
+        coordinates.push([lat / factor, lng / factor]);
+    }
+    return coordinates;
+}
+
 function renderJourneyResults(routes) {
     journeyResultsDiv.innerHTML = '';
     
@@ -1234,59 +1252,52 @@ function renderJourneyResults(routes) {
         const card = document.createElement('div');
         card.className = 'route-card';
         
-        let totalMins = 0;
-        let hasRealtime = false;
-        
-        // Count total time first
-        route.legs.forEach(leg => {
-            totalMins += leg.time || 0;
-            if (leg.wait_time && leg.wait_time > 0) {
-                totalMins += leg.wait_time;
-            }
-        });
+        let totalMins = route.duration_minutes || 0;
+        let hasRealtime = true; // OTP handles real-time!
         
         let legsHtml = '';
         
         route.legs.forEach(leg => {
-            if (leg.type === 'walk') {
+            if (leg.mode === 'WALK') {
                 legsHtml += `<div class="route-leg">
-                    <span>🚶</span> <span>Caminar ${leg.time} min hasta <b>${leg.dest_stop || 'destino'}</b></span>
+                    <span>🚶</span> <span>Caminar ${leg.duration_minutes} min hasta <b>${leg.end_name || 'destino'}</b></span>
                 </div>`;
             } else {
-                const isBus = leg.type === 'bus';
-                const isMetrobus = leg.type === 'metrobus';
-                const badgeColor = isBus ? '#ef4444' : (isMetrobus ? '#FFB81C' : '#3b82f6');
+                let agencyName = leg.agency || "Transporte";
+                let defaultColor = '#3b82f6'; // default blue
+                if (agencyName.toLowerCase().includes('emt')) defaultColor = '#ef4444';
+                else if (agencyName.toLowerCase().includes('metrobus')) defaultColor = '#FFB81C';
+                else if (agencyName.toLowerCase().includes('tram')) defaultColor = '#f97316';
                 
-                if (leg.wait_time && leg.wait_time > 0) {
-                    legsHtml += `<div class="route-leg" style="border-left: 3px dashed #ccc; margin-left: 5px; padding-left: 15px;">
-                        <span style="color:#666">⏳</span> <span style="color:#666">Espera de <b>${leg.wait_time} min</b></span>
-                    </div>`;
-                }
-                
-                let etaInfo = '';
-                if (leg.live_eta !== undefined && leg.live_eta !== "N/A") {
-                    etaInfo = ` <span style="color:#22c55e;font-weight:600">(Llega a las ${leg.live_eta})</span>`;
-                    hasRealtime = true;
-                }
-                
-                const isTram = leg.type === 'tram' || leg.type === 'tram_alicante';
-                const isMetro = leg.type === 'metro';
-                
-                let agencyName = isBus ? 'EMT' : (isMetrobus ? 'Metrobús' : (isTram ? "TRAM d'Alacant" : 'Metrovalencia'));
-                let lineDisplay = String(leg.line);
-                if (!isBus && !isMetrobus && !lineDisplay.startsWith('L')) {
+                let lineDisplay = leg.routeShortName || leg.route || "";
+                if (lineDisplay && !lineDisplay.startsWith('L') && !agencyName.toLowerCase().includes('emt') && !agencyName.toLowerCase().includes('metrobus')) {
                     lineDisplay = 'L' + lineDisplay;
                 }
                 
+                let badgeColor = leg.color ? `#${leg.color}` : defaultColor;
+                if (agencyName.toLowerCase().includes('metro valencia') || agencyName.toLowerCase().includes('metrovalencia')) {
+                    badgeColor = typeof metroColors !== 'undefined' && metroColors[lineDisplay] ? metroColors[lineDisplay] : '#3b82f6';
+                } else if (agencyName.toLowerCase().includes('tram')) {
+                    badgeColor = typeof tramColors !== 'undefined' && tramColors[lineDisplay] ? tramColors[lineDisplay] : '#f97316';
+                } else if (agencyName.toLowerCase().includes('emt')) {
+                    badgeColor = '#ef4444';
+                } else if (agencyName.toLowerCase().includes('metrobus')) {
+                    badgeColor = '#FFB81C';
+                }
+                
+                // Show destination clearly
+                let destDisplay = leg.headsign ? `dirección ${leg.headsign}` : `hasta <b>${leg.end_name}</b>`;
+                
+                let etaDisplay = leg.live_eta ? `<br><span style="color: #10b981; font-weight: 500; font-size: 0.9em;">(Llega en: ${leg.live_eta})</span>` : '';
+                
                 legsHtml += `<div class="route-leg">
-                    <span style="color:${badgeColor}">●</span> <span>Viajar en ${agencyName} <span class="route-badge" style="background-color: ${badgeColor}; display:inline-block; margin: 0 4px">${lineDisplay}</span> durante ${leg.time} min hasta <b>${leg.dest_stop}</b>${etaInfo}</span>
+                    <span style="color:${badgeColor}">●</span> <span>Viajar en ${agencyName} <span class="route-badge" style="background-color: ${badgeColor}; display:inline-block; margin: 0 4px">${lineDisplay}</span> ${destDisplay} (${leg.duration_minutes} min) ${etaDisplay}</span>
                 </div>`;
             }
         });
         
         card.innerHTML = `
-            <div class="route-card-header">
-                <div class="route-badge" style="background-color: #333">Ruta Optimizada</div>
+            <div class="route-header">
                 <div class="route-time">${totalMins} min</div>
             </div>
             <div class="route-details">
@@ -1299,7 +1310,7 @@ function renderJourneyResults(routes) {
         `;
         
         card.onclick = () => {
-            console.log('Drawing journey route!');
+            console.log('Drawing OTP journey route!');
             if (window.currentJourneyLayer) { map.removeLayer(window.currentJourneyLayer); }
             if (window.journeyMarkersLayer) { map.removeLayer(window.journeyMarkersLayer); }
             
@@ -1308,116 +1319,89 @@ function renderJourneyResults(routes) {
             document.getElementById('map').classList.add('route-mode-active');
             document.querySelector('.main-header').classList.add('route-mode-active');
             map.closePopup();
-            map.removeLayer(markersLayer);
+            if (typeof markersLayer !== 'undefined') map.removeLayer(markersLayer);
             
             const journeyFeatureGroup = L.featureGroup();
             window.journeyMarkersLayer = journeyFeatureGroup;
             window.currentJourneyLayer = journeyFeatureGroup;
             
-            route.legs.forEach(async leg => {
-                if (leg.stops_coords && leg.stops_coords.length > 0) {
-                    const isWalk = leg.type === 'walk';
-                    const isBus = leg.type === 'bus';
-                    const isMetrobus = leg.type === 'metrobus';
-                    const isTram = leg.type === 'tram' || leg.type === 'tram_alicante';
-                    const isMetro = leg.type === 'metro';
+            route.legs.forEach(leg => {
+                if (leg.polyline) {
+                    const coords = decodePolyline(leg.polyline);
+                    const isWalk = leg.mode === 'WALK';
                     
-                    let color = isWalk ? '#888' : '#ef4444';
-                    if (isTram) color = tramColors[leg.line] || '#f97316';
-                    else if (isMetro) color = metroColors[leg.line] || '#3b82f6';
-                    else if (isMetrobus) color = '#FFB81C';
                     
-                    // Draw Polyline for walking, exact geometry for transit
-                    if (isWalk) {
-                        L.polyline(leg.stops_coords, {
-                            color: color,
-                            weight: 5,
-                            dashArray: '5, 10',
-                            opacity: 0.8
-                        }).addTo(journeyFeatureGroup);
-                    } else {
-                        try {
-                            const res = await fetch(`/api/line_geometry?line=${leg.line}&type=${leg.type}`);
-                            const data = await res.json();
-                            
-                            let drawn = false;
-                            if (data.success && data.geometry) {
-                                const startPt = turf.point([leg.stops_coords[0][1], leg.stops_coords[0][0]]);
-                                const endPt = turf.point([leg.stops_coords[leg.stops_coords.length - 1][1], leg.stops_coords[leg.stops_coords.length - 1][0]]);
-                                
-                                let bestSlice = null;
-                                let bestDist = Infinity;
-                                
-                                const linesToTest = data.geometry.type === 'MultiLineString' 
-                                    ? data.geometry.coordinates.map(c => turf.lineString(c)) 
-                                    : [turf.lineString(data.geometry.coordinates)];
-                                    
-                                linesToTest.forEach(line => {
-                                    try {
-                                        const startSnap = turf.nearestPointOnLine(line, startPt);
-                                        const endSnap = turf.nearestPointOnLine(line, endPt);
-                                        // Both points must be close to this shape variant (within 300 meters)
-                                        if (startSnap.properties.dist < 0.3 && endSnap.properties.dist < 0.3) {
-                                            const slice = turf.lineSlice(startSnap, endSnap, line);
-                                            // Prefer the shortest valid slice to avoid drawing huge roundabout loops
-                                            const d = turf.length(slice);
-                                            if (d < bestDist) {
-                                                bestDist = d;
-                                                bestSlice = slice;
-                                            }
-                                        }
-                                    } catch (e) {}
-                                });
-                                
-                                if (bestSlice) {
-                                    L.geoJSON(bestSlice, {
-                                        style: { color: color, weight: 5, opacity: 0.9 }
-                                    }).addTo(journeyFeatureGroup);
-                                    drawn = true;
-                                }
-                            }
-                            
-                            // Fallback to straight lines if geometry fails or slicing fails
-                            if (!drawn) {
-                                L.polyline(leg.stops_coords, {
-                                    color: color, weight: 5, opacity: 0.9
-                                }).addTo(journeyFeatureGroup);
-                            }
-                        } catch (e) {
-                            L.polyline(leg.stops_coords, { color: color, weight: 5, opacity: 0.9 }).addTo(journeyFeatureGroup);
+                    let color = isWalk ? '#888' : '#3b82f6';
+                    if (!isWalk) {
+                        let agencyLower = (leg.agency || '').toLowerCase();
+                        let lineDisplay = leg.routeShortName || leg.route || "";
+                        if (lineDisplay && !lineDisplay.startsWith('L') && !agencyLower.includes('emt') && !agencyLower.includes('metrobus')) {
+                            lineDisplay = 'L' + lineDisplay;
+                        }
+                        
+                        if (agencyLower.includes('metro valencia') || agencyLower.includes('metrovalencia')) {
+                            color = typeof metroColors !== 'undefined' && metroColors[lineDisplay] ? metroColors[lineDisplay] : (leg.color ? `#${leg.color}` : '#3b82f6');
+                        } else if (agencyLower.includes('tram')) {
+                            color = typeof tramColors !== 'undefined' && tramColors[lineDisplay] ? tramColors[lineDisplay] : (leg.color ? `#${leg.color}` : '#f97316');
+                        } else if (agencyLower.includes('emt')) {
+                            color = '#ef4444';
+                        } else if (agencyLower.includes('metrobus')) {
+                            color = '#FFB81C';
+                        } else {
+                            color = leg.color ? `#${leg.color}` : '#ef4444';
                         }
                     }
                     
+                    L.polyline(coords, {
+                        color: color,
+                        weight: 5,
+                        dashArray: isWalk ? '5, 10' : null,
+                        opacity: 0.9
+                    }).addTo(journeyFeatureGroup);
+                    
                     // Draw Markers for Stops (only for transit legs)
-                    if (!isWalk && leg.stops_coords.length > 0) {
+                    if (!isWalk) {
+                        let legType = 'bus'; // default
+                        let agencyLower = (leg.agency || '').toLowerCase();
+                        if (agencyLower.includes('metrobus')) legType = 'metrobus';
+                        else if (agencyLower.includes('metro valencia') || agencyLower.includes('metrovalencia')) legType = 'metro';
+                        else if (agencyLower.includes('tram')) legType = 'tram';
+                        
                         const bindMarkerClick = (marker, stopName, stopId) => {
-                            if (!stopId) return; // Safety check
+                            if (!stopId) return; 
+                            // Extract actual ID if it is prefixed like "2:41" -> "41"
+                            const cleanId = stopId.includes(':') ? stopId.split(':')[1] : stopId;
                             marker.bindPopup('', { className: 'custom-popup', closeButton: false, minWidth: 200 });
                             marker.on('click', async () => {
                                 map.setView(marker.getLatLng(), 18);
-                                await loadStopData(marker, {id: stopId, name: stopName, type: leg.type}, leg.line);
+                                await loadStopData(marker, {id: cleanId, name: stopName, type: legType}, leg.routeShortName || leg.route);
                             });
                         };
 
-                        // Draw origin circle
-                        const originMarker = L.circleMarker(leg.stops_coords[0], {
-                            radius: 6, fillColor: '#fff', color: color, weight: 3, fillOpacity: 1
-                        }).addTo(journeyFeatureGroup);
-                        bindMarkerClick(originMarker, leg.orig_stop || leg.stops_names[0], leg.stops_ids ? leg.stops_ids[0] : null);
+                        if (leg.start_lat && leg.start_lon) {
+                            const originMarker = L.circleMarker([leg.start_lat, leg.start_lon], {
+                                radius: 6, fillColor: '#fff', color: color, weight: 3, fillOpacity: 1
+                            }).addTo(journeyFeatureGroup);
+                            if (leg.start_id) bindMarkerClick(originMarker, leg.start_name, leg.start_id);
+                            else originMarker.bindPopup(`<b>${leg.start_name}</b>`);
+                        }
                         
-                        // Draw destination circle
-                        const destMarker = L.circleMarker(leg.stops_coords[leg.stops_coords.length - 1], {
-                            radius: 6, fillColor: '#fff', color: color, weight: 3, fillOpacity: 1
-                        }).addTo(journeyFeatureGroup);
-                        bindMarkerClick(destMarker, leg.dest_stop || leg.stops_names[leg.stops_names.length - 1], leg.stops_ids ? leg.stops_ids[leg.stops_ids.length - 1] : null);
+                        if (leg.end_lat && leg.end_lon) {
+                            const destMarker = L.circleMarker([leg.end_lat, leg.end_lon], {
+                                radius: 6, fillColor: '#fff', color: color, weight: 3, fillOpacity: 1
+                            }).addTo(journeyFeatureGroup);
+                            if (leg.end_id) bindMarkerClick(destMarker, leg.end_name, leg.end_id);
+                            else destMarker.bindPopup(`<b>${leg.end_name}</b>`);
+                        }
                         
                         // Intermediate stops
-                        if (leg.stops_names && leg.stops_names.length > 2) {
-                            for (let i = 1; i < leg.stops_coords.length - 1; i++) {
-                                const interMarker = L.circleMarker(leg.stops_coords[i], {
+                        if (leg.stops && leg.stops.length > 0) {
+                            for (let i = 0; i < leg.stops.length; i++) {
+                                const interMarker = L.circleMarker([leg.stops[i].lat, leg.stops[i].lon], {
                                     radius: 4, fillColor: color, color: '#fff', weight: 1, fillOpacity: 1
                                 }).addTo(journeyFeatureGroup);
-                                bindMarkerClick(interMarker, leg.stops_names[i], leg.stops_ids ? leg.stops_ids[i] : null);
+                                if (leg.stops[i].id) bindMarkerClick(interMarker, leg.stops[i].name, leg.stops[i].id);
+                                else interMarker.bindPopup(`<b>${leg.stops[i].name}</b>`);
                             }
                         }
                     }
@@ -1434,4 +1418,5 @@ function renderJourneyResults(routes) {
         journeyResultsDiv.appendChild(card);
     });
 }
+
 

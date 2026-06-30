@@ -8,3 +8,23 @@ __pycache__/
 *.sqlite3
 *.db-journal
 .DS_Store
+
+# Heavy OTP files and OSM data (Excluded from Git)
+otp-test/valencia-latest.osm.pbf
+otp-test/graph.obj
+otp-test/otp-*.jar
+otp-test/jdk-*
+
+# Production zip bundles
+dist/
+valencia-transit-server.zip
+
+# Development raw downloads
+*.zip
+!otp-test/*.zip
+
+# Temporary scripts
+test*.py
+check*.py
+patch*.py
+trace*.py

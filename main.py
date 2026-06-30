@@ -933,265 +933,247 @@ async def fetch_osrm_walk(lat1, lon1, lat2, lon2):
 
 @app.get("/api/journey")
 async def get_journey(orig_lat: float, orig_lng: float, dest_lat: float, dest_lng: float):
-    if not STOPS_CACHE or not TRANSIT_GRAPH:
-        return {"success": False, "error": "Graph not initialized"}
-        
-    import heapq
-    WALK_SPEED = 66.66 # meters per min
+    from datetime import datetime, timedelta
     
-    orig_stops = []
-    for sid, sdata in STOPS_CACHE.items():
-        d = calculate_haversine(orig_lat, orig_lng, sdata['lat'], sdata['lng']) * 1.4
-        if d <= 600 * 1.4:
-            orig_stops.append((sid, d / WALK_SPEED))
-            
-    dest_stops = {}
-    for sid, sdata in STOPS_CACHE.items():
-        d = calculate_haversine(dest_lat, dest_lng, sdata['lat'], sdata['lng']) * 1.4
-        if d <= 600 * 1.4:
-            dest_stops[sid] = d / WALK_SPEED
-            
-    disabled_lines = set()
-    best_overall_route = None
+    # Get current local time
+    now = datetime.now()
     
-    for master_retry in range(5):
-        k_paths = []
-        penalized_lines = {}
-        
-        for k in range(3):
-            pq = []
-            for sid, w in orig_stops:
-                heapq.heappush(pq, (w, sid, [(sid, w, 'walk', 'walk', 'walk', None)]))
-                
-            visited = {}
-            best_path = None
-            best_weight = float('inf')
-            
-            while pq:
-                curr_w, u, path = heapq.heappop(pq)
-                if curr_w >= best_weight: continue
-                if u in visited and visited[u] <= curr_w: continue
-                visited[u] = curr_w
-                
-                if u in dest_stops:
-                    final_w = curr_w + dest_stops[u]
-                    if final_w < best_weight:
-                        best_weight = final_w
-                        best_path = path + [('DEST', dest_stops[u], 'walk', 'walk', 'walk', None)]
-                        
-                for v, w_edge, edge_type, ref, ttype, rid in TRANSIT_GRAPH.get(u, []):
-                    if edge_type == 'transit' and (ref, ttype) in disabled_lines:
-                        continue
-                    
-                    new_w = curr_w + w_edge
-                    if edge_type == 'transit':
-                        penalty = penalized_lines.get((ref, ttype), 0)
-                        new_w += penalty
-                        
-                    if edge_type == 'transit' and path:
-                        prev_edge_type = path[-1][2]
-                        prev_ref = path[-1][3]
-                        if prev_edge_type == 'transit' and prev_ref != ref:
-                            new_w += 5.0 # 5 min penalty
-                            
-                    if new_w < best_weight:
-                        heapq.heappush(pq, (new_w, v, path + [(v, w_edge, edge_type, ref, ttype, rid)]))
-                        
-            if not best_path:
-                break
-                
-            legs = []
-            first_stop = best_path[0][0]
-            legs.append({
-                'type': 'walk',
-                'time': round(best_path[0][1]),
-                'orig_lat': orig_lat, 'orig_lng': orig_lng,
-                'dest_stop': STOPS_CACHE[first_stop]['name'],
-                'stops_coords': [[orig_lat, orig_lng], [STOPS_CACHE[first_stop]['lat'], STOPS_CACHE[first_stop]['lng']]]
-            })
-            current_leg = None
-            route_ids_used = set()
-            transit_lines_in_path = set()
-            
-            for i in range(1, len(best_path)):
-                node, w_edge, edge_type, ref, ttype, rid = best_path[i]
-                prev_node = best_path[i-1][0]
-                
-                if node == 'DEST':
-                    if current_leg: legs.append(current_leg)
-                    legs.append({
-                        'type': 'walk',
-                        'time': round(w_edge),
-                        'orig_stop': STOPS_CACHE[prev_node]['name'],
-                        'dest_lat': dest_lat, 'dest_lng': dest_lng,
-                        'stops_coords': [[STOPS_CACHE[prev_node]['lat'], STOPS_CACHE[prev_node]['lng']], [dest_lat, dest_lng]]
-                    })
-                    break
-                    
-                if edge_type == 'walk' or edge_type == 'transfer':
-                    if current_leg: 
-                        legs.append(current_leg)
-                        current_leg = None
-                    legs.append({
-                        'type': 'walk',
-                        'time': round(w_edge),
-                        'orig_stop': STOPS_CACHE[prev_node]['name'],
-                        'dest_stop': STOPS_CACHE[node]['name'],
-                        'stops_coords': [[STOPS_CACHE[prev_node]['lat'], STOPS_CACHE[prev_node]['lng']], [STOPS_CACHE[node]['lat'], STOPS_CACHE[node]['lng']]]
-                    })
-                else:
-                    if rid: route_ids_used.add(rid)
-                    transit_lines_in_path.add((ref, ttype))
-                    if not current_leg or current_leg['line'] != ref:
-                        if current_leg: legs.append(current_leg)
-                        current_leg = {
-                            'type': ttype,
-                            'line': ref,
-                            'orig_id': prev_node,
-                            'orig_stop': STOPS_CACHE[prev_node]['name'],
-                            'dest_stop': STOPS_CACHE[node]['name'],
-                            'time': w_edge,
-                            'stops_coords': [
-                                [STOPS_CACHE[prev_node]['lat'], STOPS_CACHE[prev_node]['lng']],
-                                [STOPS_CACHE[node]['lat'], STOPS_CACHE[node]['lng']]
-                            ],
-                            'stops_names': [
-                                STOPS_CACHE[prev_node]['name'],
-                                STOPS_CACHE[node]['name']
-                            ],
-                            'stops_ids': [
-                                prev_node,
-                                node
-                            ]
-                        }
-                    else:
-                        current_leg['dest_stop'] = STOPS_CACHE[node]['name']
-                        current_leg['time'] += w_edge
-                        current_leg['stops_coords'].append([STOPS_CACHE[node]['lat'], STOPS_CACHE[node]['lng']])
-                        current_leg['stops_names'].append(STOPS_CACHE[node]['name'])
-                        current_leg['stops_ids'].append(node)
-                        
-            for leg in legs:
-                if 'time' in leg:
-                    leg['time'] = round(leg['time'])
-                    
-            k_paths.append({"legs": legs, "route_ids": list(route_ids_used)})
-            
-            # Penalize lines used to force diversity in the next iteration
-            for line, ttype in transit_lines_in_path:
-                penalized_lines[(line, ttype)] = penalized_lines.get((line, ttype), 0) + 20.0
-                
-        if not k_paths:
-            break
-            
-        async def fetch_raw_etas(orig_id, ltype):
-            try:
-                eta_res = await asyncio.wait_for(get_eta(orig_id, ltype), timeout=10.0)
-                if eta_res.get('success'):
-                    return eta_res['data']
-                return None
-            except Exception:
-                return None
-                
-        # Collect unique transit legs across all paths for batch ETA fetching
-        unique_stops = {}
-        for path in k_paths:
-            for leg in path['legs']:
-                if leg['type'] != 'walk':
-                    unique_stops[(leg['orig_id'], leg['type'])] = None
-                    
-        if unique_stops:
-            stop_keys = list(unique_stops.keys())
-            raw_eta_results = await asyncio.gather(*(fetch_raw_etas(sid, ltype) for sid, ltype in stop_keys))
-            unique_stops = {k: res for k, res in zip(stop_keys, raw_eta_results)}
-            
-        pruned_any = False
-        valid_paths = []
-        
-        for path in k_paths:
-            legs = path['legs']
-            cumulative_time = 0
-            path_pruned = False
-            
-            for leg in legs:
-                if leg['type'] == 'walk':
-                    cumulative_time += leg['time']
-                else:
-                    raw_etas = unique_stops.get((leg['orig_id'], leg['type']))
-                    if raw_etas is None:
-                        leg['wait_time'] = 0
-                        leg['live_eta'] = "N/A"
-                        cumulative_time += leg['time']
-                        continue
-                        
-                    def match_line(api_line, graph_line):
-                        return str(api_line).lstrip('L').lower() == str(graph_line).lstrip('L').lower()
-                        
-                    etas = [e for e in raw_etas if match_line(e.get('line'), leg['line'])]
-                        
-                    if not etas:
-                        disabled_lines.add((leg['line'], leg['type']))
-                        path_pruned = True
-                        pruned_any = True
-                        break
-                        
-                    best_wait = float('inf')
-                    best_eta = None
-                    for e in etas:
-                        eta_mins = parse_time_str(e.get('eta'))
-                        if eta_mins == float('inf'): continue
-                        if eta_mins >= cumulative_time:
-                            wait = eta_mins - cumulative_time
-                            if wait < best_wait:
-                                best_wait = wait
-                                best_eta = e.get('eta')
-                                
-                    if best_eta is None:
-                        best_wait = 10
-                        best_eta = "N/A"
-                        
-                    if best_wait > 90:
-                        disabled_lines.add((leg['line'], leg['type']))
-                        path_pruned = True
-                        pruned_any = True
-                        break
-                        
-                    leg['wait_time'] = best_wait
-                    leg['live_eta'] = best_eta
-                    cumulative_time += (leg['time'] + best_wait)
-                    
-            if not path_pruned:
-                path['total_time'] = cumulative_time
-                valid_paths.append(path)
-                
-        if pruned_any and not valid_paths:
-            continue
-            
-        if valid_paths:
-            valid_paths.sort(key=lambda x: x['total_time'])
-            best_overall_route = valid_paths[0]
-            break
-        
-    if not best_overall_route:
-        return {"success": True, "routes": []}
-        
-    clean_legs = []
-    for leg in best_overall_route['legs']:
-        if leg['type'] == 'walk' and clean_legs and clean_legs[-1]['type'] == 'walk':
-            clean_legs[-1]['time'] += leg['time']
-            clean_legs[-1]['dest_stop'] = leg.get('dest_stop', 'destino')
-        else:
-            if leg['time'] > 0 or leg['type'] != 'walk': 
-                clean_legs.append(leg)
-
-    return {
-        "success": True, 
-        "routes": [{
-            "legs": clean_legs, 
-            "route_ids": best_overall_route['route_ids'],
-            "total_time": best_overall_route.get('total_time')
-        }]
+    # CRITICAL HACK: We subtract 15 minutes from the current time to feed into OTP.
+    # Why? If a train is delayed (e.g. theoretical departure at 23:49, but real arrival at 23:55),
+    # OTP at 23:50 will NOT suggest it because GTFS says it already left.
+    # By asking OTP for routes from 15 minutes ago, it suggests the 23:49 train.
+    # Our real-time interceptor then asks the API: "Is this train still coming?".
+    # If it is delayed, the API says "Yes, in 16 mins", and we validate the route!
+    # If it truly left, the API says "No", and we prune it.
+    past_time = now - timedelta(minutes=15)
+    current_time_str = past_time.strftime('%I:%M%p').lower()
+    
+    OTP_URL = "http://localhost:8080/otp/routers/default/plan"
+    params = {
+        "fromPlace": f"{orig_lat},{orig_lng}",
+        "toPlace": f"{dest_lat},{dest_lng}",
+        "time": current_time_str,
+        "date": "06-30-2026",
+        "mode": "TRANSIT,WALK",
+        "maxWalkDistance": 2000,
+        "arriveBy": "false",
+        "numItineraries": 10
     }
+    
+    import httpx
+    import math
+    
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(OTP_URL, params=params, timeout=15.0)
+            
+        if response.status_code != 200:
+            return {"success": False, "error": "Error connecting to OTP"}
+            
+        data = response.json()
+        
+        if "error" in data:
+            return {"success": False, "error": data["error"].get("msg", "Routing error")}
+            
+        if not data.get("plan", {}).get("itineraries"):
+            return {"success": True, "routes": []} # No routes found
+            
+        # We will process all itineraries and keep the valid ones
+        import asyncio
+        valid_routes = []
+        
+        async def get_live_eta_for_leg(leg):
+            if leg["mode"] == "WALK": return None
+            
+            agency_lower = leg.get("agencyName", "").lower()
+            leg_type = "bus"
+            if "metrobus" in agency_lower: leg_type = "metrobus"
+            elif "metro valencia" in agency_lower or "metrovalencia" in agency_lower: leg_type = "metro"
+            elif "tram" in agency_lower: leg_type = "tram"
+            
+            stop_id = leg["from"].get("stopId", "")
+            if ":" in stop_id: stop_id = stop_id.split(":")[-1]
+            
+            # CRITICAL FIX: GTFS stop IDs for Metro/Tram (e.g. 41) DO NOT match the internal FGV real-time API IDs (e.g. 57)
+            # We must map them by finding the geographically closest stop in our stops.db, just like the frontend popup does.
+            if leg_type in ["metro", "tram"]:
+                lat = leg["from"]["lat"]
+                lng = leg["from"]["lon"]
+                
+                import aiosqlite
+                best_id = None
+                best_dist = 999999
+                try:
+                    async with aiosqlite.connect('stops.db') as db:
+                        cursor = await db.execute('SELECT id, lat, lng FROM stops WHERE type = ?', (leg_type,))
+                        rows = await cursor.fetchall()
+                        for r_id, r_lat, r_lng in rows:
+                            d = calculate_haversine(lat, lng, r_lat, r_lng)
+                            if d < best_dist:
+                                best_dist = d
+                                best_id = r_id
+                except Exception as e:
+                    pass
+                    
+                if best_id and best_dist < 100: # Must be within 100 meters
+                    if "-" in best_id:
+                        stop_id = best_id.split("-")[-1]
+                    else:
+                        stop_id = best_id
+                        
+            if not stop_id: return None
+            return await get_eta(stop_id, leg_type)
+
+        for itinerary in data["plan"]["itineraries"]:
+            clean_response = {
+                "duration_minutes": math.ceil(itinerary["duration"] / 60),
+                "walk_distance_meters": round(itinerary["walkDistance"]),
+                "transfers": itinerary["transfers"],
+                "legs": []
+            }
+            
+            # Fetch ETAs for all legs in this itinerary concurrently
+            tasks = [get_live_eta_for_leg(leg) for leg in itinerary["legs"]]
+            eta_results = await asyncio.gather(*tasks)
+            
+            is_valid_route = True
+            accumulated_time = 0
+            
+            for leg, eta_resp in zip(itinerary["legs"], eta_results):
+                clean_leg = {
+                    "mode": leg["mode"],
+                    "start_name": leg["from"]["name"],
+                    "start_lat": leg["from"]["lat"],
+                    "start_lon": leg["from"]["lon"],
+                    "start_id": leg["from"].get("stopId"),
+                    "end_name": leg["to"]["name"],
+                    "end_lat": leg["to"]["lat"],
+                    "end_lon": leg["to"]["lon"],
+                    "end_id": leg["to"].get("stopId"),
+                    "distance": round(leg["distance"]),
+                    "duration_minutes": math.ceil(leg["duration"] / 60),
+                    "polyline": leg["legGeometry"]["points"]
+                }
+                
+                if leg["mode"] == "WALK":
+                    accumulated_time += clean_leg["duration_minutes"]
+                
+                if leg["mode"] != "WALK":
+                    clean_leg["route"] = leg.get("route", "")
+                    clean_leg["routeShortName"] = leg.get("routeShortName", "")
+                    clean_leg["agency"] = leg.get("agencyName", "")
+                    clean_leg["color"] = leg.get("routeColor", "")
+                    clean_leg["headsign"] = leg.get("headsign", "")
+                    clean_leg["stops"] = [
+                        {"name": stop["name"], "lat": stop["lat"], "lon": stop["lon"], "id": stop.get("stopId")}
+                        for stop in leg.get("intermediateStops", [])
+                    ]
+                    
+                    # Match with real-time ETA
+                    line_display = leg.get("routeShortName") or leg.get("route", "")
+                    leg_type = "bus"
+                    agency_lower = clean_leg["agency"].lower()
+                    if "metrobus" in agency_lower: leg_type = "metrobus"
+                    elif "metro valencia" in agency_lower or "metrovalencia" in agency_lower: leg_type = "metro"
+                    elif "tram" in agency_lower: leg_type = "tram"
+                    
+                    if line_display and not line_display.startswith("L") and leg_type in ["metro", "tram"]:
+                        line_display = "L" + line_display
+                        
+                    has_live = False
+                    
+                    if eta_resp and eta_resp.get("success"):
+                        for arrival in eta_resp.get("data", []):
+                            arr_line = str(arrival.get("line", "")).strip()
+                            # Loose match: "4" == "L4" or "4" == "4"
+                            if arr_line == str(leg.get("routeShortName", "")) or arr_line == line_display:
+                                arr_eta = arrival.get("eta", "")
+                                
+                                # Verify if the user can physically reach the station in time
+                                can_reach = True
+                                eta_mins = 0
+                                if "próx" in arr_eta.lower() or "prox" in arr_eta.lower():
+                                    eta_mins = 0
+                                else:
+                                    import re
+                                    nums = re.findall(r'\d+', arr_eta)
+                                    if nums:
+                                        eta_mins = int(nums[0])
+                                        
+                                if eta_mins < (accumulated_time - 5):
+                                    can_reach = False
+                                    
+                                if not can_reach:
+                                    # Cannot reach this specific vehicle in time. Skip to see if there's a later one.
+                                    continue
+                                
+                                clean_leg["live_eta"] = arr_eta
+                                has_live = True
+                                
+                                # Re-calculate accumulated time with the real wait time
+                                accumulated_time = eta_mins + clean_leg["duration_minutes"]
+                                break
+                                
+                    if not has_live:
+                        # If ETA api was successful but didn't contain our vehicle (or was completely empty), the route is dead right now.
+                        if eta_resp and eta_resp.get("success") and not eta_resp.get("timeout"):
+                            is_valid_route = False
+                            break
+                            
+                clean_response["legs"].append(clean_leg)
+                
+            if is_valid_route:
+                # Update total duration to perfectly match the real-time flow
+                clean_response["duration_minutes"] = accumulated_time
+                valid_routes.append(clean_response)
+                
+        if not valid_routes:
+            return {"success": False, "error": "Ruta inválida: los transportes sugeridos no están en circulación activa en este momento."}
+            
+        # Categorize routes to guarantee diversity (1 Rail, 1 Bus, 1 Walk)
+        walk_routes = []
+        bus_routes = []
+        rail_routes = []
+        
+        for r in valid_routes:
+            is_rail = False
+            is_bus = False
+            
+            for leg in r["legs"]:
+                if leg["mode"] != "WALK":
+                    agency_lower = leg.get("agency", "").lower()
+                    if "metro valencia" in agency_lower or "metrovalencia" in agency_lower or "tram" in agency_lower:
+                        is_rail = True
+                    else:
+                        is_bus = True
+            
+            if is_rail:
+                rail_routes.append(r)
+            elif is_bus:
+                bus_routes.append(r)
+            else:
+                walk_routes.append(r)
+                
+        # Sort each bucket by true real-time duration
+        walk_routes.sort(key=lambda r: r["duration_minutes"])
+        bus_routes.sort(key=lambda r: r["duration_minutes"])
+        rail_routes.sort(key=lambda r: r["duration_minutes"])
+        
+        # Pick the top 1 from each category
+        final_routes = []
+        if rail_routes: final_routes.append(rail_routes[0])
+        if bus_routes: final_routes.append(bus_routes[0])
+        if walk_routes: final_routes.append(walk_routes[0])
+        
+        # Sort the final combination so the absolute fastest appears first
+        final_routes.sort(key=lambda r: r["duration_minutes"])
+        
+        return {"success": True, "routes": final_routes}
+        
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return {"success": False, "error": str(e)}
 
 # Serve static files
 app.mount("/css", StaticFiles(directory="static/css"), name="css")

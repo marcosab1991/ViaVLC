@@ -643,7 +643,7 @@ h1 {
     z-index: 1001;
     border-radius: 20px 20px 0 0;
     padding: 24px;
-    max-height: 85vh;
+    max-height: 60vh;
     overflow-y: auto;
     transition: transform 0.4s cubic-bezier(0.16, 1, 0.3, 1);
 }
@@ -652,12 +652,28 @@ h1 {
     transform: translateY(100%);
 }
 
+/* Custom Scrollbar for Journey Panel */
+.journey-panel::-webkit-scrollbar {
+    width: 6px;
+}
+.journey-panel::-webkit-scrollbar-track {
+    background: rgba(255, 255, 255, 0.02);
+}
+.journey-panel::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.2);
+    border-radius: 10px;
+}
+.journey-panel::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.4);
+}
+
 @media (min-width: 768px) {
     .journey-panel {
         bottom: 24px;
         left: 24px;
         right: auto;
         width: 380px;
+        max-height: 85vh;
         border-radius: 20px;
     }
     .journey-panel.hidden {

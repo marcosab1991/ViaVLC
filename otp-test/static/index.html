@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OTP Routing Test</title>
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <style>
+        body { margin: 0; padding: 0; font-family: Arial, sans-serif; }
+        #map { height: 100vh; width: 100vw; }
+        #controls {
+            position: absolute;
+            top: 20px;
+            left: 50px;
+            z-index: 1000;
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+            width: 300px;
+        }
+        button {
+            width: 100%;
+            padding: 10px;
+            background: #2563eb;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            margin-top: 10px;
+        }
+        button:hover { background: #1d4ed8; }
+        #info { margin-top: 10px; font-size: 14px; color: #333; }
+        .instructions { font-size: 12px; color: #666; margin-bottom: 10px; }
+    </style>
+</head>
+<body>
+    <div id="controls">
+        <h3>OTP Route Planner</h3>
+        <div class="instructions">Click on the map to set <b>Origin</b> (A), then click again to set <b>Destination</b> (B).</div>
+        <div id="status">Waiting for origin...</div>
+        <button id="calc-btn" disabled>Calcular Rota</button>
+        <button id="reset-btn" style="background: #dc2626; display: none;">Reset</button>
+        <div id="info"></div>
+    </div>
+    <div id="map"></div>
+
+    <!-- Leaflet JS -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    
+    <script>
+        // Polyline decoding function (standard Google Maps algorithm used by OTP)
+        function decodePolyline(str, precision) {
+            var index = 0,
+                lat = 0,
+                lng = 0,
+                coordinates = [],
+                shift = 0,
+                result = 0,
+                byte = null,
+                latitude_change,
+                longitude_change,
+                factor = Math.pow(10, precision !== undefined ? precision : 5);
+
+            while (index < str.length) {
+                byte = null;
+                shift = 0;
+                result = 0;
+
+                do {
+                    byte = str.charCodeAt(index++) - 63;
+                    result |= (byte & 0x1f) << shift;
+                    shift += 5;
+                } while (byte >= 0x20);
+
+                latitude_change = ((result & 1) ? ~(result >> 1) : (result >> 1));
+                shift = result = 0;
+
+                do {
+                    byte = str.charCodeAt(index++) - 63;
+                    result |= (byte & 0x1f) << shift;
+                    shift += 5;
+                } while (byte >= 0x20);
+
+                longitude_change = ((result & 1) ? ~(result >> 1) : (result >> 1));
+
+                lat += latitude_change;
+                lng += longitude_change;
+
+                coordinates.push([lat / factor, lng / factor]);
+            }
+            return coordinates;
+        }
+
+        const map = L.map('map').setView([39.4699, -0.3763], 13); // Valencia
+        L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+            attribution: '© OpenStreetMap contributors',
+            maxZoom: 19
+        }).addTo(map);
+
+        let origin = null;
+        let destination = null;
+        let originMarker = null;
+        let destMarker = null;
+        let routeLayers = L.featureGroup().addTo(map);
+
+        const statusEl = document.getElementById('status');
+        const calcBtn = document.getElementById('calc-btn');
+        const resetBtn = document.getElementById('reset-btn');
+        const infoEl = document.getElementById('info');
+
+        map.on('click', (e) => {
+            if (!origin) {
+                origin = e.latlng;
+                originMarker = L.marker(origin, {icon: L.divIcon({className: '', html: '🟢', iconSize: [20, 20]})}).addTo(map);
+                statusEl.innerHTML = "Origin set. Click map for <b>Destination</b>.";
+            } else if (!destination) {
+                destination = e.latlng;
+                destMarker = L.marker(destination, {icon: L.divIcon({className: '', html: '🔴', iconSize: [20, 20]})}).addTo(map);
+                statusEl.innerHTML = "Ready to calculate.";
+                calcBtn.disabled = false;
+            }
+        });
+
+        resetBtn.addEventListener('click', () => {
+            origin = destination = null;
+            if (originMarker) map.removeLayer(originMarker);
+            if (destMarker) map.removeLayer(destMarker);
+            routeLayers.clearLayers();
+            statusEl.innerHTML = "Waiting for origin...";
+            infoEl.innerHTML = "";
+            calcBtn.disabled = true;
+            calcBtn.style.display = 'block';
+            resetBtn.style.display = 'none';
+        });
+
+        calcBtn.addEventListener('click', async () => {
+            if (!origin || !destination) return;
+            
+            calcBtn.innerText = "Calculando...";
+            calcBtn.disabled = true;
+            infoEl.innerHTML = "";
+            routeLayers.clearLayers();
+
+            try {
+                const url = `/api/calcular_rota?origem_lat=${origin.lat}&origem_lon=${origin.lng}&destino_lat=${destination.lat}&destino_lon=${destination.lng}`;
+                const response = await fetch(url);
+                const data = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(data.detail || "Error calculating route");
+                }
+
+                drawRoute(data);
+
+            } catch (err) {
+                infoEl.innerHTML = `<span style="color: red;">Error: ${err.message}</span>`;
+            } finally {
+                calcBtn.style.display = 'none';
+                resetBtn.style.display = 'block';
+                calcBtn.innerText = "Calcular Rota";
+            }
+        });
+
+        function drawRoute(data) {
+            infoEl.innerHTML = `<b>Time:</b> ${data.duration_minutes} min<br><b>Walking:</b> ${data.walk_distance_meters}m<br><b>Transfers:</b> ${data.transfers}<hr>`;
+            
+            data.legs.forEach(leg => {
+                const coords = decodePolyline(leg.polyline);
+                let color = "#333";
+                let dashArray = null;
+                let weight = 5;
+                
+                infoEl.innerHTML += `<div><b>${leg.mode}</b> `;
+
+                if (leg.mode === 'WALK') {
+                    color = "#2563eb"; // Blue for walk
+                    dashArray = "5, 10"; // Dotted line
+                    weight = 4;
+                    infoEl.innerHTML += `${leg.distance}m</div>`;
+                } else {
+                    color = leg.color ? `#${leg.color}` : "#e11d48"; // Red default for bus
+                    dashArray = null;
+                    weight = 6;
+                    infoEl.innerHTML += `Line ${leg.route} (${leg.duration_minutes} min)</div>`;
+                    
+                    // Draw stops
+                    if (leg.stops) {
+                        leg.stops.forEach(stop => {
+                            const marker = L.circleMarker([stop.lat, stop.lon], {
+                                radius: 4,
+                                color: "#fff",
+                                weight: 2,
+                                fillColor: color,
+                                fillOpacity: 1
+                            }).bindPopup(stop.name);
+                            routeLayers.addLayer(marker);
+                        });
+                    }
+                }
+
+                const polyline = L.polyline(coords, {
+                    color: color,
+                    weight: weight,
+                    dashArray: dashArray,
+                    opacity: 0.8
+                });
+                
+                routeLayers.addLayer(polyline);
+            });
+
+            map.fitBounds(routeLayers.getBounds(), {padding: [50, 50]});
+        }
+    </script>
+</body>
+</html>
